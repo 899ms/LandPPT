@@ -339,6 +339,11 @@ class PPTOutlineGenerator(LoggerMixin):
             fixed_pages=fixed_pages,
         )
 
+        workflow_config = {}
+        conversation_id = getattr(self.config, "conversation_id", None)
+        if conversation_id:
+            workflow_config["conversation_id"] = conversation_id
+
         yield {
             "status": {
                 "step": "file_process",
@@ -346,7 +351,9 @@ class PPTOutlineGenerator(LoggerMixin):
                 "progress": 0.24,
             }
         }
-        structure_state = await self.workflow_manager.nodes.analyze_structure(state, {})
+        structure_state = await self.workflow_manager.nodes.analyze_structure(
+            state, workflow_config
+        )
         state = {**state, **structure_state}
 
         yield {
@@ -368,7 +375,7 @@ class PPTOutlineGenerator(LoggerMixin):
         initial_task = asyncio.create_task(
             self.workflow_manager.nodes.generate_initial_outline_streaming(
                 state,
-                {},
+                workflow_config,
                 chunk_callback=_on_initial_chunk,
             )
         )
@@ -410,7 +417,7 @@ class PPTOutlineGenerator(LoggerMixin):
             refine_task = asyncio.create_task(
                 self.workflow_manager.nodes.refine_outline_streaming(
                     state,
-                    {},
+                    workflow_config,
                     chunk_callback=_on_refine_chunk,
                 )
             )

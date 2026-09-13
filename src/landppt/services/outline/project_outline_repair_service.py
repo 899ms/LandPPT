@@ -24,7 +24,11 @@ from ...api.models import (
 from ...ai import get_ai_provider, get_role_provider, AIMessage, MessageRole
 from ...ai.base import TextContent, ImageContent
 from ...core.config import ai_config, app_config
-from ..runtime.ai_execution import ExecutionContext
+from ..runtime.ai_execution import (
+    ExecutionContext,
+    is_provider_protocol_error,
+    scoped_ai_conversation,
+)
 from ..prompts import prompts_manager
 from ..research.enhanced_research_service import EnhancedResearchService
 from ..research.enhanced_report_generator import EnhancedReportGenerator
@@ -181,6 +185,7 @@ class ProjectOutlineRepairService:
             errors.append(f'第{slide_index}页验证出错: {str(e)}')
             return errors
 
+    @scoped_ai_conversation("outline-repair")
     async def _repair_outline_with_ai(self, outline_data: Dict[str, Any], validation_errors: List[str], confirmed_requirements: Dict[str, Any]) -> Dict[str, Any]:
         """使用AI修复大纲JSON数据"""
         try:
@@ -199,6 +204,8 @@ class ProjectOutlineRepairService:
             return repaired_outline
         except Exception as e:
             logger.error(f'AI修复过程出错: {str(e)}')
+            if is_provider_protocol_error(e):
+                raise
             return outline_data
 
     def _build_repair_prompt(self, outline_data: Dict[str, Any], validation_errors: List[str], confirmed_requirements: Dict[str, Any]) -> str:

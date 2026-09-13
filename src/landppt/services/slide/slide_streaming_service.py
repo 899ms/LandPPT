@@ -367,6 +367,21 @@ class SlideStreamingService:
             yield f"data: {json.dumps({'type': 'complete', 'message': f'✅PPT制作完成！成功生成 {total_slides} 页幻灯片', 'total': total_slides})}\n\n"
 
     async def generate_slides_streaming(self, project_id: str):
+            from ..runtime.ai_execution import (
+                ai_conversation_context,
+                get_current_ai_conversation_id,
+                new_ai_conversation_id,
+            )
+
+            conversation_id = (
+                get_current_ai_conversation_id()
+                or new_ai_conversation_id("slide-generation")
+            )
+            with ai_conversation_context(conversation_id):
+                async for chunk in self._generate_slides_streaming(project_id):
+                    yield chunk
+
+    async def _generate_slides_streaming(self, project_id: str):
             """Generate slides with streaming output.
 
             Generation is started idempotently in a background task protected by a distributed lock.

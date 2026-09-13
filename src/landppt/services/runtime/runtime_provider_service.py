@@ -119,6 +119,10 @@ class RuntimeProviderService:
 
     async def _text_completion_for_role(self, role: str, *, prompt: str, **kwargs):
         """调用指定角色的模型进行文本补全"""
+        from .ai_execution import get_current_ai_conversation_id
+        kwargs.setdefault("conversation_id", get_current_ai_conversation_id())
+        if kwargs.get("conversation_id") is None:
+            kwargs.pop("conversation_id", None)
         provider, settings = await self._get_role_provider_async(role)
         if settings.get('model'):
             kwargs.setdefault('model', settings['model'])
@@ -162,6 +166,10 @@ class RuntimeProviderService:
 
     async def _stream_text_completion_for_role(self, role: str, *, prompt: str, **kwargs):
         """流式调用指定角色的模型进行文本补全，逐 token yield"""
+        from .ai_execution import get_current_ai_conversation_id
+        kwargs.setdefault("conversation_id", get_current_ai_conversation_id())
+        if kwargs.get("conversation_id") is None:
+            kwargs.pop("conversation_id", None)
         provider, settings = await self._get_role_provider_async(role)
         if settings.get('model'):
             kwargs.setdefault('model', settings['model'])
@@ -189,6 +197,10 @@ class RuntimeProviderService:
 
     async def _chat_completion_for_role(self, role: str, *, messages: List[AIMessage], **kwargs):
         """调用指定角色的模型进行对话补全"""
+        from .ai_execution import get_current_ai_conversation_id
+        kwargs.setdefault("conversation_id", get_current_ai_conversation_id())
+        if kwargs.get("conversation_id") is None:
+            kwargs.pop("conversation_id", None)
         provider, settings = await self._get_role_provider_async(role)
         if settings.get('model'):
             kwargs.setdefault('model', settings['model'])

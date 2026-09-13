@@ -25,6 +25,14 @@ from ..services.deep_research_service import DEEPResearchService
 from ..services.research_report_generator import ResearchReportGenerator
 from ..core.config import ai_config, resolve_timeout_seconds
 from ..core.file_access import UnsafeFilePathError, validate_client_file_path
+from ..ai.providers import (
+    build_opencode_client_headers,
+    build_opencode_test_session_headers,
+)
+from ..services.runtime.ai_execution import (
+    ai_conversation_context,
+    new_ai_conversation_id,
+)
 
 
 ALLOWED_STAGE_STATUSES = frozenset(
@@ -224,6 +232,8 @@ async def test_ai_provider(provider_name: str, request: Request):
                         'Authorization': f'Bearer {api_key}',
                         'Content-Type': 'application/json'
                     }
+                    headers.update(build_opencode_client_headers(base_url))
+                    headers.update(build_opencode_test_session_headers(base_url))
                     
                     payload = {
                         "model": model,
@@ -273,7 +283,8 @@ async def test_ai_provider(provider_name: str, request: Request):
             content="Hello, please respond with a brief greeting."
         )
 
-        response = await provider.chat_completion([test_message])
+        with ai_conversation_context(new_ai_conversation_id("provider-test")):
+            response = await provider.chat_completion([test_message])
 
         # Apply think tag filtering to the response content
         filtered_content = filter_think_tags(response.content)

@@ -123,6 +123,7 @@ class OutlineAIOptimizeRequest(BaseModel):
     optimization_type: str = "full"  # full=全大纲优化, single=单页优化
     slide_index: Optional[int] = None  # 当optimization_type=single时使用
     language: Optional[str] = None  # 目标语言（如 zh/en/ja...），优先级高于大纲metadata.language
+    conversation_id: Optional[str] = None
 
 
 @router.post("/api/projects/{project_id}/slides/{slide_index}/auto-repair-layout")
@@ -890,6 +891,8 @@ async def ai_optimize_outline(
 ):
     """AI优化大纲接口 - 支持全大纲优化和单页优化"""
     try:
+        from ...services.runtime.ai_execution import new_ai_conversation_id
+        conversation_id = request.conversation_id or new_ai_conversation_id("outline-optimize")
         # 获取AI提供者
         user_ppt_service = get_ppt_service_for_user(user.id)
         provider, settings = await user_ppt_service.get_role_provider_async("editor")
@@ -1065,7 +1068,9 @@ async def ai_optimize_outline(
         ]
         
         # 调用AI生成回复（自动应用用户配置的 temperature / top_p）
-        response = await user_ppt_service._chat_completion_for_role("editor", messages=messages)
+        response = await user_ppt_service._chat_completion_for_role(
+            "editor", messages=messages, conversation_id=conversation_id
+        )
         
         ai_response = response.content
         

@@ -160,6 +160,7 @@ class ProcessingConfig:
     use_responses_api: bool = False
     enable_reasoning: bool = False
     reasoning_effort: str = "medium"
+    conversation_id: Optional[str] = None
 
     def __post_init__(self):
         """后处理验证和默认值设置"""

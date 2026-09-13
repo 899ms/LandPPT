@@ -13,6 +13,12 @@ from typing import Any
 
 from ...api.models import FileOutlineGenerationResponse
 from ...core.file_access import UnsafeFilePathError, validate_client_file_path
+from ..runtime.ai_execution import (
+    ai_conversation_context,
+    get_current_ai_conversation_id,
+    is_provider_protocol_error,
+    new_ai_conversation_id,
+)
 from ...utils.thread_pool import run_blocking_io
 from .outline_workflow_support import (
     build_file_info,
@@ -53,7 +59,14 @@ class OutlineWorkflowService:
             chunk_size,
         )
 
-        execution_context = svc._build_execution_context("outline", current_ai_config)
+        conversation_id = (
+            getattr(request, "conversation_id", None)
+            or get_current_ai_conversation_id()
+            or new_ai_conversation_id("file-outline")
+        )
+        execution_context = svc._build_execution_context(
+            "outline", current_ai_config, conversation_id
+        )
         config = svc._build_summeryanyfile_processing_config(
             processing_config_cls=ProcessingConfig,
             execution_context=execution_context,
@@ -81,6 +94,16 @@ class OutlineWorkflowService:
         return generator, cache_dir
 
     async def generate_outline_from_file_streaming(self, request: Any):
+        conversation_id = (
+            getattr(request, "conversation_id", None)
+            or get_current_ai_conversation_id()
+            or new_ai_conversation_id("file-outline")
+        )
+        with ai_conversation_context(conversation_id):
+            async for event in self._generate_outline_from_file_streaming(request):
+                yield event
+
+    async def _generate_outline_from_file_streaming(self, request: Any):
         svc = self._service
         try:
             logger.info("Streaming file outline generation for %s", request.filename)
@@ -153,6 +176,8 @@ class OutlineWorkflowService:
                 )
             except Exception as exc:
                 logger.error("summeryanyfile streaming file outline generation failed: %s", exc)
+                if is_provider_protocol_error(exc):
+                    raise
 
             fallback_result = await self._generate_outline_from_file_fallback(request)
             if not fallback_result.success or not fallback_result.outline:
@@ -184,6 +209,17 @@ class OutlineWorkflowService:
             yield {"error": str(exc)}
 
     async def generate_outline_from_file(
+        self, request: Any
+    ) -> FileOutlineGenerationResponse:
+        conversation_id = (
+            getattr(request, "conversation_id", None)
+            or get_current_ai_conversation_id()
+            or new_ai_conversation_id("file-outline")
+        )
+        with ai_conversation_context(conversation_id):
+            return await self._generate_outline_from_file(request)
+
+    async def _generate_outline_from_file(
         self, request: Any
     ) -> FileOutlineGenerationResponse:
         svc = self._service
@@ -257,6 +293,8 @@ class OutlineWorkflowService:
                 # failure when it can't produce anything usable instead of shipping
                 # a mojibake outline as success.
                 logger.error("summeryanyfile outline generation failed, trying fallback: %s", exc)
+                if is_provider_protocol_error(exc):
+                    raise
                 try:
                     return await self._generate_outline_from_file_fallback(request)
                 except Exception as fallback_exc:

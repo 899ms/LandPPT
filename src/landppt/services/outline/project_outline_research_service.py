@@ -25,7 +25,11 @@ from ...ai import get_ai_provider, get_role_provider, AIMessage, MessageRole
 from ...ai.base import TextContent, ImageContent
 from ...core.config import ai_config, app_config
 from ...core.file_access import sanitize_path_component
-from ..runtime.ai_execution import ExecutionContext
+from ..runtime.ai_execution import (
+    ExecutionContext,
+    is_provider_protocol_error,
+    scoped_ai_conversation,
+)
 from ..prompts import prompts_manager
 from ..research.enhanced_research_service import EnhancedResearchService
 from ..research.enhanced_report_generator import EnhancedReportGenerator
@@ -124,6 +128,8 @@ class ProjectOutlineResearchService:
                     context=research_input_context,
                 )
         except Exception as research_error:
+            if is_provider_protocol_error(research_error):
+                raise
             if provider == 'enhanced' and getattr(self, 'research_service', None) is not None:
                 logger.warning('Enhanced research failed, falling back to legacy research: %s', research_error)
                 research_service = self.research_service
@@ -137,6 +143,8 @@ class ProjectOutlineResearchService:
                         context=research_input_context,
                     )
                 except Exception as fallback_error:
+                    if is_provider_protocol_error(fallback_error):
+                        raise
                     logger.error('Legacy research fallback also failed: %s', fallback_error)
                     import traceback
                     logger.error(f'Traceback: {traceback.format_exc()}')
@@ -193,6 +201,8 @@ class ProjectOutlineResearchService:
                     return outline
                 logger.warning('File-based outline generation failed after %s research, falling back to traditional method', provider)
             except Exception as file_error:
+                if is_provider_protocol_error(file_error):
+                    raise
                 logger.warning('Failed to generate outline from %s research file, falling back to traditional method: %s', provider, file_error)
             finally:
                 if report_path_is_temp and report_path:
@@ -204,6 +214,7 @@ class ProjectOutlineResearchService:
         logger.info('%s research completed but file-based outline generation failed', provider)
         return None
 
+    @scoped_ai_conversation("outline")
     async def generate_outline(self, request: PPTGenerationRequest, page_count_settings: Dict[str, Any]=None) -> PPTOutline:
         """Generate PPT outline using real AI with optional Enhanced research and page count settings"""
         try:

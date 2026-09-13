@@ -9,6 +9,7 @@ import re
 import hashlib
 import threading
 import uuid
+from importlib.metadata import PackageNotFoundError, version as package_version
 from urllib.parse import urlparse
 from collections import OrderedDict
 from typing import List, Dict, Any, Optional, AsyncGenerator, Union, Tuple
@@ -41,6 +42,17 @@ def build_opencode_session_headers(
         return {}
 
     return {"x-opencode-session": session_id}
+
+
+def build_opencode_client_headers(base_url: Optional[str]) -> Dict[str, str]:
+    """Identify LandPPT honestly on OpenCode Go without changing other providers."""
+    if not build_opencode_session_headers(base_url, "landppt-client-check"):
+        return {}
+    try:
+        client_version = package_version("landppt")
+    except PackageNotFoundError:
+        client_version = "unknown"
+    return {"User-Agent": f"LandPPT/{client_version}"}
 
 
 def build_opencode_test_session_headers(base_url: Optional[str]) -> Dict[str, str]:
@@ -145,17 +157,23 @@ class OpenAIProvider(AIProvider):
         try:
             import openai
             timeout = _build_httpx_timeout(config)
+            client_kwargs = {
+                "api_key": config.get("api_key"),
+                "base_url": config.get("base_url"),
+                "timeout": timeout,
+            }
+            client_headers = build_opencode_client_headers(config.get("base_url"))
+            if client_headers:
+                client_kwargs["default_headers"] = client_headers
             try:
-                self.client = openai.AsyncOpenAI(
-                    api_key=config.get("api_key"),
-                    base_url=config.get("base_url"),
-                    timeout=timeout,
-                )
+                self.client = openai.AsyncOpenAI(**client_kwargs)
             except TypeError:
-                self.client = openai.AsyncOpenAI(
-                    api_key=config.get("api_key"),
-                    base_url=config.get("base_url"),
-                )
+                client_kwargs.pop("timeout", None)
+                try:
+                    self.client = openai.AsyncOpenAI(**client_kwargs)
+                except TypeError:
+                    client_kwargs.pop("default_headers", None)
+                    self.client = openai.AsyncOpenAI(**client_kwargs)
         except ImportError:
             logger.warning("OpenAI library not installed. Install with: pip install openai")
             self.client = None
@@ -296,9 +314,10 @@ class OpenAIProvider(AIProvider):
 
         self._apply_reasoning_config(request_kwargs, config, responses_api=False)
 
+        from ..services.runtime.ai_execution import get_current_ai_conversation_id
         extra_headers = build_opencode_session_headers(
             config.get("base_url"),
-            config.get("conversation_id"),
+            config.get("conversation_id") or get_current_ai_conversation_id(),
         )
         if extra_headers:
             request_kwargs["extra_headers"] = extra_headers
@@ -336,9 +355,10 @@ class OpenAIProvider(AIProvider):
 
         self._apply_reasoning_config(request_kwargs, config, responses_api=True)
 
+        from ..services.runtime.ai_execution import get_current_ai_conversation_id
         extra_headers = build_opencode_session_headers(
             config.get("base_url"),
-            config.get("conversation_id"),
+            config.get("conversation_id") or get_current_ai_conversation_id(),
         )
         if extra_headers:
             request_kwargs["extra_headers"] = extra_headers

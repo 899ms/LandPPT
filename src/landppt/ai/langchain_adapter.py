@@ -121,6 +121,10 @@ class LandPPTChatModel(BaseChatModel):
         }
         if kwargs.get("top_p") is not None:
             request_overrides["top_p"] = kwargs.get("top_p")
+        from ..services.runtime.ai_execution import get_current_ai_conversation_id
+        conversation_id = kwargs.get("conversation_id") or get_current_ai_conversation_id()
+        if conversation_id:
+            request_overrides["conversation_id"] = conversation_id
 
         response = await provider.chat_completion(**request_overrides)
 
@@ -152,6 +156,10 @@ class LandPPTChatModel(BaseChatModel):
         }
         if kwargs.get("top_p") is not None:
             request_overrides["top_p"] = kwargs.get("top_p")
+        from ..services.runtime.ai_execution import get_current_ai_conversation_id
+        conversation_id = kwargs.get("conversation_id") or get_current_ai_conversation_id()
+        if conversation_id:
+            request_overrides["conversation_id"] = conversation_id
 
         async for token in provider.stream_chat_completion(**request_overrides):
             if not token:

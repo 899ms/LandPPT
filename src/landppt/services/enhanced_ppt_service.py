@@ -233,8 +233,11 @@ class EnhancedPPTService(PPTService):
         self,
         role: str,
         current_ai_config: Optional[Dict[str, Any]] = None,
+        conversation_id: Optional[str] = None,
     ) -> ExecutionContext:
-        return self.runtime_support._build_execution_context(role, current_ai_config)
+        if conversation_id is None:
+            return self.runtime_support._build_execution_context(role, current_ai_config)
+        return self.runtime_support._build_execution_context(role, current_ai_config, conversation_id)
 
 
     def _build_summeryanyfile_processing_config(

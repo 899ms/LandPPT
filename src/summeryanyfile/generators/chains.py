@@ -97,7 +97,13 @@ class ChainManager(LoggerMixin):
         
         try:
             self.logger.debug(f"调用处理链: {chain_name}")
-            result = await chain.ainvoke(inputs, config or {})
+            from landppt.services.runtime.ai_execution import (
+                ai_conversation_context,
+                get_current_ai_conversation_id,
+            )
+            conversation_id = (config or {}).get("conversation_id") or get_current_ai_conversation_id()
+            with ai_conversation_context(conversation_id):
+                result = await chain.ainvoke(inputs, config or {})
             self.logger.debug(f"处理链 {chain_name} 执行成功")
             return result
         except Exception as e:
@@ -115,10 +121,16 @@ class ChainManager(LoggerMixin):
 
         try:
             self.logger.debug(f"流式调用处理链: {chain_name}")
-            async for chunk in chain.astream(inputs, config or {}):
-                if not chunk:
-                    continue
-                yield str(chunk)
+            from landppt.services.runtime.ai_execution import (
+                ai_conversation_context,
+                get_current_ai_conversation_id,
+            )
+            conversation_id = (config or {}).get("conversation_id") or get_current_ai_conversation_id()
+            with ai_conversation_context(conversation_id):
+                async for chunk in chain.astream(inputs, config or {}):
+                    if not chunk:
+                        continue
+                    yield str(chunk)
             self.logger.debug(f"处理链 {chain_name} 流式执行成功")
         except Exception as e:
             self.logger.error(f"处理链 {chain_name} 流式执行失败: {e}")

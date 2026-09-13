@@ -106,6 +106,8 @@ class WorkflowManager(LoggerMixin):
             
             # 创建运行配置
             run_config = {"recursion_limit": self.recursion_limit}
+            if self.config and getattr(self.config, "conversation_id", None):
+                run_config["conversation_id"] = self.config.conversation_id
 
             async for step in self.app.astream(initial_state, config=run_config, stream_mode="values"):
                 final_state = step
@@ -171,6 +173,8 @@ class WorkflowManager(LoggerMixin):
 
         # 创建运行配置
         run_config = {"recursion_limit": self.recursion_limit}
+        if self.config and getattr(self.config, "conversation_id", None):
+            run_config["conversation_id"] = self.config.conversation_id
 
         async for step in self.app.astream(initial_state, config=run_config, stream_mode="values"):
             yield step

@@ -20,6 +20,7 @@ from tavily import TavilyClient
 from ..core.config import ai_config
 from ..ai import get_ai_provider
 from .prompts.system_prompts import SystemPrompts
+from .runtime.ai_execution import scoped_ai_conversation
 
 logger = logging.getLogger(__name__)
 
@@ -401,6 +402,7 @@ class DEEPResearchService:
         # 回退到全局配置
         return get_ai_provider()
 
+    @scoped_ai_conversation("deep-research")
     async def conduct_deep_research(
         self,
         topic: str,

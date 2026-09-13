@@ -24,7 +24,13 @@ from ...api.models import (
 from ...ai import get_ai_provider, get_role_provider, AIMessage, MessageRole
 from ...ai.base import TextContent, ImageContent
 from ...core.config import ai_config, app_config
-from ..runtime.ai_execution import ExecutionContext
+from ..runtime.ai_execution import (
+    ExecutionContext,
+    ai_conversation_context,
+    get_current_ai_conversation_id,
+    is_provider_protocol_error,
+    new_ai_conversation_id,
+)
 from ..prompts import prompts_manager
 from ..research.enhanced_research_service import EnhancedResearchService
 from ..research.enhanced_report_generator import EnhancedReportGenerator
@@ -207,6 +213,8 @@ class ProjectOutlineStreamingService:
                     last_ping_at = now
             research_report = await research_task
         except Exception as research_error:
+            if is_provider_protocol_error(research_error):
+                raise
             if provider == 'enhanced' and getattr(self, 'research_service', None) is not None:
                 logger.warning('Enhanced research failed for project %s, falling back to legacy research: %s', project_id, research_error)
                 yield await self._build_streaming_research_status_event('research_fallback', '增强研究不可用，正在切换到标准研究...', 0.05)
@@ -239,6 +247,8 @@ class ProjectOutlineStreamingService:
                             last_ping_at = now
                     research_report = await research_task
                 except Exception as fallback_error:
+                    if is_provider_protocol_error(fallback_error):
+                        raise
                     logger.warning('Legacy research fallback failed for project %s, proceeding without research context: %s', project_id, fallback_error)
                     yield await self._build_streaming_research_status_event('research_skip', '联网研究失败，改为直接生成大纲...', 0.08)
                     return
@@ -332,6 +342,17 @@ class ProjectOutlineStreamingService:
         return
 
     async def generate_outline_streaming(self, project_id: str, *, force_regenerate: bool = False):
+        conversation_id = (
+            get_current_ai_conversation_id()
+            or new_ai_conversation_id("outline")
+        )
+        with ai_conversation_context(conversation_id):
+            async for event in self._generate_outline_streaming(
+                project_id, force_regenerate=force_regenerate
+            ):
+                yield event
+
+    async def _generate_outline_streaming(self, project_id: str, *, force_regenerate: bool = False):
         """Generate outline with streaming output"""
         try:
             project = await self.project_manager.get_project(project_id)
