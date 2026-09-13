@@ -8,6 +8,8 @@ import logging
 import re
 import hashlib
 import threading
+import uuid
+from urllib.parse import urlparse
 from collections import OrderedDict
 from typing import List, Dict, Any, Optional, AsyncGenerator, Union, Tuple
 
@@ -15,6 +17,35 @@ from .base import AIProvider, AIMessage, AIResponse, MessageRole, TextContent, I
 from ..core.config import ai_config, resolve_timeout_seconds
 
 logger = logging.getLogger(__name__)
+
+
+def build_opencode_session_headers(
+    base_url: Optional[str],
+    conversation_id: Optional[str],
+) -> Dict[str, str]:
+    """Build OpenCode Go's session header without affecting other providers."""
+    session_id = str(conversation_id or "").strip()
+    if not session_id or len(session_id) > 256 or any(char in session_id for char in "\r\n"):
+        return {}
+
+    try:
+        parsed = urlparse(str(base_url or "").strip())
+    except ValueError:
+        return {}
+
+    hostname = (parsed.hostname or "").lower().rstrip(".")
+    path = (parsed.path or "").rstrip("/")
+    if parsed.scheme not in {"http", "https"} or hostname != "opencode.ai":
+        return {}
+    if path != "/zen/go" and not path.startswith("/zen/go/"):
+        return {}
+
+    return {"x-opencode-session": session_id}
+
+
+def build_opencode_test_session_headers(base_url: Optional[str]) -> Dict[str, str]:
+    """Create a fresh session for one provider connectivity-test lifecycle."""
+    return build_opencode_session_headers(base_url, uuid.uuid4().hex)
 
 def _get_llm_timeout_seconds(config: Dict[str, Any], *, default_seconds: float = 600.0) -> float:
     raw_timeout = config.get("llm_timeout_seconds")
@@ -265,6 +296,13 @@ class OpenAIProvider(AIProvider):
 
         self._apply_reasoning_config(request_kwargs, config, responses_api=False)
 
+        extra_headers = build_opencode_session_headers(
+            config.get("base_url"),
+            config.get("conversation_id"),
+        )
+        if extra_headers:
+            request_kwargs["extra_headers"] = extra_headers
+
         return request_kwargs
 
     def _extract_openai_tool_calls(self, message: Any) -> List[Dict[str, Any]]:
@@ -297,6 +335,13 @@ class OpenAIProvider(AIProvider):
         }
 
         self._apply_reasoning_config(request_kwargs, config, responses_api=True)
+
+        extra_headers = build_opencode_session_headers(
+            config.get("base_url"),
+            config.get("conversation_id"),
+        )
+        if extra_headers:
+            request_kwargs["extra_headers"] = extra_headers
 
         return request_kwargs
 

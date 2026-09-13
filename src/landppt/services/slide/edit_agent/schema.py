@@ -37,6 +37,7 @@ class SlideEditAgentRequest(BaseModel):
     visionEnabled: bool = False
     maxIterations: Optional[int] = None
     runId: Optional[str] = None
+    conversation_id: Optional[str] = None
 
 
 class SlideEditAgentApplyRequest(BaseModel):

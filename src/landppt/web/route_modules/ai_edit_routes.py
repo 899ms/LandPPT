@@ -55,6 +55,7 @@ class AISlideEditRequest(BaseModel):
     projectInfo: Dict[str, Any]
     slideOutline: Optional[Dict[str, Any]] = None
     chatHistory: Optional[List[Dict[str, str]]] = None
+    conversation_id: Optional[str] = None
     images: Optional[List[Dict[str, Any]]] = None  # 新增：图片信息列表（url/id/name/size 等）
     visionEnabled: Optional[bool] = False  # 新增：视觉模式启用状态
     slideScreenshot: Optional[str] = None  # 新增：幻灯片截图数据（data URL / base64）
@@ -68,6 +69,7 @@ class AIElementEditRequest(BaseModel):
     elementId: str
     userRequest: str
     projectInfo: Dict[str, Any]
+    conversation_id: Optional[str] = None
     slideOutline: Optional[Dict[str, Any]] = None
     visionEnabled: Optional[bool] = False
     elementScreenshot: Optional[str] = None
@@ -79,6 +81,7 @@ class AISlideNativeDialogRequest(BaseModel):
     slideContent: str
     userRequest: str
     chatHistory: Optional[List[Dict[str, str]]] = None
+    conversation_id: Optional[str] = None
     images: Optional[List[Dict[str, str]]] = None  # 粘贴/上传图片信息列表（url/id/name/size）
 
 
@@ -308,7 +311,11 @@ async def ai_slide_edit(
         messages.append(AIMessage(role=MessageRole.USER, content=context))
 
         # 调用AI生成回复（自动应用用户配置的 temperature / top_p）
-        response = await user_ppt_service._chat_completion_for_role(role, messages=messages)
+        response = await user_ppt_service._chat_completion_for_role(
+            role,
+            messages=messages,
+            conversation_id=request.conversation_id,
+        )
 
         ai_response = response.content
 
@@ -412,7 +419,11 @@ Constraints:
         else:
             messages.append(AIMessage(role=MessageRole.USER, content=context))
 
-        response = await user_ppt_service._chat_completion_for_role(role, messages=messages)
+        response = await user_ppt_service._chat_completion_for_role(
+            role,
+            messages=messages,
+            conversation_id=request.conversation_id,
+        )
         ai_response = (response.content or "").strip()
 
         def _extract_candidate_html(text: str) -> str:
@@ -643,7 +654,8 @@ async def ai_slide_edit_stream(
                         messages=messages,
                         temperature=temperature,
                         top_p=top_p,
-                        model=settings.get('model')
+                        model=settings.get('model'),
+                        conversation_id=request.conversation_id,
                     ):
                         if chunk:
                             full_response += chunk
@@ -653,7 +665,8 @@ async def ai_slide_edit_stream(
                         messages=messages,
                         temperature=temperature,
                         top_p=top_p,
-                        model=settings.get('model')
+                        model=settings.get('model'),
+                        conversation_id=request.conversation_id,
                     )
                     if response.content:
                         full_response = response.content
@@ -813,6 +826,7 @@ async def ai_slide_native_dialog_stream(
                         temperature=temperature,
                         top_p=top_p,
                         model=settings.get("model"),
+                        conversation_id=request.conversation_id,
                     ):
                         if chunk:
                             full_response += chunk
@@ -823,6 +837,7 @@ async def ai_slide_native_dialog_stream(
                         temperature=temperature,
                         top_p=top_p,
                         model=settings.get("model"),
+                        conversation_id=request.conversation_id,
                     )
                     if response.content:
                         full_response = response.content

@@ -223,10 +223,19 @@ slidesDataWasNormalized = normalizeSlidesDataToOutline();
 
 // AI编辑相关变量
 let aiChatHistory = {}; // 改为对象，按幻灯片索引存储对话历史
+let aiChatSessionIds = {}; // 与每个幻灯片的 AI 对话历史一一对应
+let nativeChatSessionIds = {}; // 与每个幻灯片的原生对话历史一一对应
 let isAISending = false;
 let isResizingSidebar = false;
 let sidebarStartWidth = 500;
 let sidebarStartX = 0;
+
+function newLandPPTConversationId() {
+    if (window.crypto && typeof window.crypto.randomUUID === 'function') {
+        return window.crypto.randomUUID();
+    }
+    return `landppt-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
 
 // 图片上传相关变量
 let uploadedImages = window.uploadedImages || [];
