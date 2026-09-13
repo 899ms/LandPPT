@@ -16,6 +16,7 @@ from ..core.config import ai_config
 from ..api.models import PPTProject
 from .prompts.system_prompts import SystemPrompts
 from .progress_tracker import progress_tracker
+from .runtime.ai_execution import scoped_ai_conversation
 
 logger = logging.getLogger(__name__)
 
@@ -220,6 +221,7 @@ class SpeechScriptService:
                 self.provider_settings = None
 
     
+    @scoped_ai_conversation("speech-script")
     async def generate_single_slide_script(
         self,
         project: PPTProject,
@@ -284,6 +286,7 @@ class SpeechScriptService:
                 error_message=str(e)
             )
     
+    @scoped_ai_conversation("speech-script")
     async def generate_multi_slide_scripts(
         self,
         project: PPTProject,
@@ -388,6 +391,7 @@ class SpeechScriptService:
                 error_message=str(e)
             )
     
+    @scoped_ai_conversation("speech-script")
     async def generate_full_presentation_scripts(
         self,
         project: PPTProject,
@@ -423,6 +427,7 @@ class SpeechScriptService:
                 error_message=str(e)
             )
 
+    @scoped_ai_conversation("speech-script")
     async def generate_multi_slide_scripts_with_retry(
         self,
         project: PPTProject,
