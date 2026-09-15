@@ -5,6 +5,7 @@ Outline workflow orchestration extracted from EnhancedPPTService.
 from __future__ import annotations
 
 import asyncio
+from contextlib import aclosing
 import json
 import logging
 import shutil
@@ -100,8 +101,9 @@ class OutlineWorkflowService:
             or new_ai_conversation_id("file-outline")
         )
         with ai_conversation_context(conversation_id):
-            async for event in self._generate_outline_from_file_streaming(request):
-                yield event
+            async with aclosing(self._generate_outline_from_file_streaming(request)) as stream:
+                async for event in stream:
+                    yield event
 
     async def _generate_outline_from_file_streaming(self, request: Any):
         svc = self._service
@@ -124,7 +126,7 @@ class OutlineWorkflowService:
                 except Exception:
                     pass
 
-                async for event in generator.stream_generate_from_file(
+                stream = generator.stream_generate_from_file(
                     request.file_path,
                     project_topic=request.topic or "",
                     project_scenario=request.scenario or "general",
@@ -137,38 +139,40 @@ class OutlineWorkflowService:
                     min_pages=getattr(request, "min_pages", None),
                     max_pages=getattr(request, "max_pages", None),
                     fixed_pages=getattr(request, "fixed_pages", None),
-                ):
-                    outline_obj = event.get("outline_obj")
-                    if not outline_obj:
-                        yield event
-                        continue
+                )
+                async with aclosing(stream):
+                    async for event in stream:
+                        outline_obj = event.get("outline_obj")
+                        if not outline_obj:
+                            yield event
+                            continue
 
-                    llm_call_count = int(
-                        event.get("llm_call_count")
-                        or svc._extract_summeryanyfile_llm_call_count(generator)
-                        or 0
-                    )
-                    yield {
-                        "status": {
-                            "step": "validating",
-                            "message": "Validating generated outline...",
-                            "progress": 0.94,
+                        llm_call_count = int(
+                            event.get("llm_call_count")
+                            or svc._extract_summeryanyfile_llm_call_count(generator)
+                            or 0
+                        )
+                        yield {
+                            "status": {
+                                "step": "validating",
+                                "message": "Validating generated outline...",
+                                "progress": 0.94,
+                            }
                         }
-                    }
 
-                    outline = svc._standardize_summeryfile_outline(outline_obj.to_dict())
-                    outline = await svc._validate_and_repair_outline_json(
-                        outline,
-                        build_validation_requirements(
-                            request,
-                            outline.get("title", "Document Presentation"),
-                        ),
-                    )
-                    yield {
-                        "outline": outline,
-                        "llm_call_count": max(llm_call_count, 0),
-                    }
-                    return
+                        outline = svc._standardize_summeryfile_outline(outline_obj.to_dict())
+                        outline = await svc._validate_and_repair_outline_json(
+                            outline,
+                            build_validation_requirements(
+                                request,
+                                outline.get("title", "Document Presentation"),
+                            ),
+                        )
+                        yield {
+                            "outline": outline,
+                            "llm_call_count": max(llm_call_count, 0),
+                        }
+                        return
             except ImportError as exc:
                 logger.warning(
                     "summeryanyfile unavailable for streaming file outline generation: %s",

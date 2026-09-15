@@ -26,6 +26,14 @@ class WorkflowManager(LoggerMixin):
         self.nodes = GraphNodes(chain_manager, config)
         self.app: Optional["CompiledStateGraph"] = None
         self._setup_graph()
+
+    def _build_run_config(self) -> Dict[str, Any]:
+        run_config = {"recursion_limit": self.recursion_limit}
+        if self.config and getattr(self.config, "conversation_id", None):
+            run_config["configurable"] = {
+                "conversation_id": self.config.conversation_id,
+            }
+        return run_config
     
     def _setup_graph(self):
         """设置LangGraph工作流"""
@@ -105,9 +113,7 @@ class WorkflowManager(LoggerMixin):
             estimated_steps = 2 + total_chunks
             
             # 创建运行配置
-            run_config = {"recursion_limit": self.recursion_limit}
-            if self.config and getattr(self.config, "conversation_id", None):
-                run_config["conversation_id"] = self.config.conversation_id
+            run_config = self._build_run_config()
 
             async for step in self.app.astream(initial_state, config=run_config, stream_mode="values"):
                 final_state = step
@@ -172,9 +178,7 @@ class WorkflowManager(LoggerMixin):
         self.logger.info("开始逐步执行PPT生成工作流...")
 
         # 创建运行配置
-        run_config = {"recursion_limit": self.recursion_limit}
-        if self.config and getattr(self.config, "conversation_id", None):
-            run_config["conversation_id"] = self.config.conversation_id
+        run_config = self._build_run_config()
 
         async for step in self.app.astream(initial_state, config=run_config, stream_mode="values"):
             yield step

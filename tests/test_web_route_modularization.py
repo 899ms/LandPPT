@@ -472,7 +472,8 @@ def test_enhanced_ppt_service_delegates_file_outline_workflow_to_extracted_servi
 
     assert "from .outline.outline_workflow_service import OutlineWorkflowService" in service_text
     assert "self.outline_workflow = OutlineWorkflowService(self)" in service_text
-    assert "async for event in self.outline_workflow.generate_outline_from_file_streaming(request):" in service_text
+    assert "self.outline_workflow.generate_outline_from_file_streaming(request)" in service_text
+    assert "async with aclosing(stream):" in service_text
     assert "return await self.outline_workflow.generate_outline_from_file(request)" in service_text
 
     for marker in [

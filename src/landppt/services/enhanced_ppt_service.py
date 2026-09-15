@@ -12,6 +12,7 @@ import os
 import tempfile
 import base64
 import shutil
+from contextlib import aclosing
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, Any, List, Optional
@@ -651,8 +652,10 @@ class EnhancedPPTService(PPTService):
 
 
     async def generate_outline_from_file_streaming(self, request):
-        async for event in self.outline_workflow.generate_outline_from_file_streaming(request):
-            yield event
+        stream = self.outline_workflow.generate_outline_from_file_streaming(request)
+        async with aclosing(stream):
+            async for event in stream:
+                yield event
 
     async def generate_outline_from_file(self, request) -> FileOutlineGenerationResponse:
         return await self.outline_workflow.generate_outline_from_file(request)

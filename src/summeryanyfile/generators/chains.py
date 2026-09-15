@@ -15,6 +15,18 @@ from ..utils.logger import LoggerMixin
 logger = logging.getLogger(__name__)
 
 
+def _get_conversation_id(config: Optional[Dict[str, Any]]) -> Optional[str]:
+    from landppt.services.runtime.ai_execution import get_current_ai_conversation_id
+
+    config = config or {}
+    configurable = config.get("configurable") or {}
+    return (
+        configurable.get("conversation_id")
+        or config.get("conversation_id")
+        or get_current_ai_conversation_id()
+    )
+
+
 class ChainManager(LoggerMixin):
     """处理链管理器"""
     
@@ -97,11 +109,9 @@ class ChainManager(LoggerMixin):
         
         try:
             self.logger.debug(f"调用处理链: {chain_name}")
-            from landppt.services.runtime.ai_execution import (
-                ai_conversation_context,
-                get_current_ai_conversation_id,
-            )
-            conversation_id = (config or {}).get("conversation_id") or get_current_ai_conversation_id()
+            from landppt.services.runtime.ai_execution import ai_conversation_context
+
+            conversation_id = _get_conversation_id(config)
             with ai_conversation_context(conversation_id):
                 result = await chain.ainvoke(inputs, config or {})
             self.logger.debug(f"处理链 {chain_name} 执行成功")
@@ -121,11 +131,9 @@ class ChainManager(LoggerMixin):
 
         try:
             self.logger.debug(f"流式调用处理链: {chain_name}")
-            from landppt.services.runtime.ai_execution import (
-                ai_conversation_context,
-                get_current_ai_conversation_id,
-            )
-            conversation_id = (config or {}).get("conversation_id") or get_current_ai_conversation_id()
+            from landppt.services.runtime.ai_execution import ai_conversation_context
+
+            conversation_id = _get_conversation_id(config)
             with ai_conversation_context(conversation_id):
                 async for chunk in chain.astream(inputs, config or {}):
                     if not chunk:
