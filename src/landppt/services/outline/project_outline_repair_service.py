@@ -79,6 +79,8 @@ class ProjectOutlineRepairService:
                         outline_data = repaired_outline
                 except Exception as repair_error:
                     logger.error(f'第 {current_attempt} 次AI修复失败: {str(repair_error)}')
+                    if is_provider_protocol_error(repair_error):
+                        raise
                 current_attempt += 1
             logger.error(
                 'AI修复达到最大尝试次数(%d次)，大纲仍不合法: %s',

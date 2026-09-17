@@ -8,6 +8,7 @@ import shutil
 import tempfile
 import time
 import uuid
+from contextlib import aclosing
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
@@ -378,8 +379,10 @@ class SlideStreamingService:
                 or new_ai_conversation_id("slide-generation")
             )
             with ai_conversation_context(conversation_id):
-                async for chunk in self._generate_slides_streaming(project_id):
-                    yield chunk
+                stream = self._generate_slides_streaming(project_id)
+                async with aclosing(stream):
+                    async for chunk in stream:
+                        yield chunk
 
     async def _generate_slides_streaming(self, project_id: str):
             """Generate slides with streaming output.

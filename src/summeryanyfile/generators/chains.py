@@ -3,6 +3,7 @@
 """
 
 import inspect
+from contextlib import aclosing
 from typing import AsyncGenerator, Awaitable, Callable, Dict, Any, Optional
 import logging
 from langchain_core.language_models.chat_models import BaseChatModel
@@ -135,10 +136,15 @@ class ChainManager(LoggerMixin):
 
             conversation_id = _get_conversation_id(config)
             with ai_conversation_context(conversation_id):
-                async for chunk in chain.astream(inputs, config or {}):
-                    if not chunk:
-                        continue
-                    yield str(chunk)
+                stream = chain.astream(inputs, config or {})
+                # Close the provider stream deterministically, inside the
+                # conversation scope, so an early consumer exit cannot leave the
+                # session open for a later finalizer running in another context.
+                async with aclosing(stream):
+                    async for chunk in stream:
+                        if not chunk:
+                            continue
+                        yield str(chunk)
             self.logger.debug(f"处理链 {chain_name} 流式执行成功")
         except Exception as e:
             self.logger.error(f"处理链 {chain_name} 流式执行失败: {e}")
@@ -245,14 +251,18 @@ class ChainExecutor:
                 self.llm_call_count += 1
                 collected_chunks = []
 
-                async for chunk in self.chain_manager.stream_chain(chain_name, inputs, config):
-                    if not chunk:
-                        continue
-                    collected_chunks.append(chunk)
-                    if chunk_callback:
-                        callback_result = chunk_callback(chunk)
-                        if inspect.isawaitable(callback_result):
-                            await callback_result
+                stream = self.chain_manager.stream_chain(chain_name, inputs, config)
+                # A consumer-side failure (or cancellation) mid-stream must not
+                # leave the conversation scope open for the following attempt.
+                async with aclosing(stream):
+                    async for chunk in stream:
+                        if not chunk:
+                            continue
+                        collected_chunks.append(chunk)
+                        if chunk_callback:
+                            callback_result = chunk_callback(chunk)
+                            if inspect.isawaitable(callback_result):
+                                await callback_result
 
                 result = "".join(collected_chunks)
                 if attempt > 0:

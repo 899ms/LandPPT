@@ -108,9 +108,9 @@ def test_enhanced_ppt_service_delegates_extracted_service_logic():
     assert "return self.runtime_support._build_execution_context(role, current_ai_config)" in service_text
     assert "return self.runtime_support.iter_research_stream_payloads(event)" in service_text
     assert "return await self.project_outline_workflow.create_project_with_workflow(request)" in service_text
-    assert "async for item in self.project_outline_workflow.generate_outline_streaming(" in service_text
+    assert "stream = self.project_outline_workflow.generate_outline_streaming(" in service_text
     assert "force_regenerate=force_regenerate" in service_text
-    assert "async for item in self.slide_authoring.generate_slides_streaming(project_id):" in service_text
+    assert "stream = self.slide_authoring.generate_slides_streaming(project_id)" in service_text
     assert "return self.slide_authoring._clean_html_response(raw_content)" in service_text
     assert "return await self.slide_authoring.regenerate_slide(project_id, slide_index, request)" in service_text
     assert len(service_text.splitlines()) < 1000

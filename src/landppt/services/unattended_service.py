@@ -21,6 +21,7 @@ import asyncio
 import json
 import logging
 import time
+from contextlib import aclosing
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
@@ -569,35 +570,38 @@ class UnattendedPipelineRunner:
         stream_error: Optional[str] = None
         done = False
         llm_call_count = 0
-        async for chunk in chunk_source:
-            for line in str(chunk).splitlines():
-                if not line.startswith("data: "):
-                    continue
-                try:
-                    payload = json.loads(line[6:])
-                except Exception:  # noqa: BLE001
-                    continue
-                if payload.get("error"):
-                    stream_error = str(payload["error"])
-                elif payload.get("done") is True:
-                    done = True
+        # Own the stream: an abandoned generator would unwind the conversation
+        # scope in a copied Context when the loop's finalizer gets to it.
+        async with aclosing(chunk_source):
+            async for chunk in chunk_source:
+                for line in str(chunk).splitlines():
+                    if not line.startswith("data: "):
+                        continue
                     try:
-                        llm_call_count = max(0, int(payload.get("llm_call_count", 1)))
-                    except (TypeError, ValueError):
-                        llm_call_count = 1
-                elif isinstance(payload.get("status"), dict):
-                    status_payload = payload["status"]
-                    raw_progress = status_payload.get("progress")
-                    try:
-                        # The outline stream reports 0..1, not 0..100.
-                        progress = float(raw_progress) * 100.0 if raw_progress is not None else None
-                    except (TypeError, ValueError):
-                        progress = None
-                    await self._set_stage(
-                        "outline",
-                        progress=progress,
-                        message=str(status_payload.get("message") or "生成大纲中…"),
-                    )
+                        payload = json.loads(line[6:])
+                    except Exception:  # noqa: BLE001
+                        continue
+                    if payload.get("error"):
+                        stream_error = str(payload["error"])
+                    elif payload.get("done") is True:
+                        done = True
+                        try:
+                            llm_call_count = max(0, int(payload.get("llm_call_count", 1)))
+                        except (TypeError, ValueError):
+                            llm_call_count = 1
+                    elif isinstance(payload.get("status"), dict):
+                        status_payload = payload["status"]
+                        raw_progress = status_payload.get("progress")
+                        try:
+                            # The outline stream reports 0..1, not 0..100.
+                            progress = float(raw_progress) * 100.0 if raw_progress is not None else None
+                        except (TypeError, ValueError):
+                            progress = None
+                        await self._set_stage(
+                            "outline",
+                            progress=progress,
+                            message=str(status_payload.get("message") or "生成大纲中…"),
+                        )
 
         if stream_error:
             raise RuntimeError(f"大纲生成失败：{stream_error}")
@@ -734,28 +738,30 @@ class UnattendedPipelineRunner:
         # pages: parallel batches complete out of order and a resume replays every
         # already-persisted page first. Count distinct pages instead.
         seen_pages: set = set()
-        async for chunk in service.generate_slides_streaming(self.project_id):
-            for line in str(chunk).splitlines():
-                if not line.startswith("data: "):
-                    continue
-                try:
-                    payload = json.loads(line[6:])
-                except Exception:  # noqa: BLE001
-                    continue
-                event_type = payload.get("type")
-                if event_type == "progress":
-                    page_number = int(payload.get("current") or 0)
-                    stage_total = int(payload.get("total") or total) or total
-                    if page_number > 0:
-                        seen_pages.add(page_number)
-                    done = min(len(seen_pages), stage_total)
-                    await self._set_stage(
-                        "ppt",
-                        progress=(done / stage_total) * 100.0,
-                        message=f"已生成 {done}/{stage_total} 页",
-                    )
-                elif event_type == "error":
-                    stream_error = str(payload.get("message") or "PPT 生成失败")
+        # Own the stream, same reason as the outline stage above.
+        async with aclosing(service.generate_slides_streaming(self.project_id)) as slides_stream:
+            async for chunk in slides_stream:
+                for line in str(chunk).splitlines():
+                    if not line.startswith("data: "):
+                        continue
+                    try:
+                        payload = json.loads(line[6:])
+                    except Exception:  # noqa: BLE001
+                        continue
+                    event_type = payload.get("type")
+                    if event_type == "progress":
+                        page_number = int(payload.get("current") or 0)
+                        stage_total = int(payload.get("total") or total) or total
+                        if page_number > 0:
+                            seen_pages.add(page_number)
+                        done = min(len(seen_pages), stage_total)
+                        await self._set_stage(
+                            "ppt",
+                            progress=(done / stage_total) * 100.0,
+                            message=f"已生成 {done}/{stage_total} 页",
+                        )
+                    elif event_type == "error":
+                        stream_error = str(payload.get("message") or "PPT 生成失败")
 
         if stream_error:
             raise RuntimeError(f"PPT 生成失败：{stream_error}")

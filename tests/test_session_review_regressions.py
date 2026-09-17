@@ -1,11 +1,18 @@
+import asyncio
 from contextlib import aclosing
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
 from landppt.services.enhanced_ppt_service import EnhancedPPTService
 from landppt.services.outline.outline_workflow_service import OutlineWorkflowService
+from landppt.services.outline.project_outline_repair_service import ProjectOutlineRepairService
+from landppt.services.outline.project_outline_workflow_service import ProjectOutlineWorkflowService
+from landppt.services.runtime.ai_execution import ai_conversation_context
 from landppt.services.runtime.ai_execution import get_current_ai_conversation_id
+from landppt.services.slide.slide_authoring_service import SlideAuthoringService
+from landppt.services.slide.slide_streaming_service import SlideStreamingService
 from summeryanyfile.graph.workflow import WorkflowManager
 
 
@@ -209,3 +216,237 @@ async def test_chain_stream_reads_configurable_conversation_id():
 
     assert chunks == ["chunk"]
     assert observed == ["stream-session"]
+
+
+@pytest.mark.asyncio
+async def test_outline_stream_early_close_restores_context_and_isolates_sessions():
+    observed_sessions = []
+    outline = {
+        "title": "Cached deck",
+        "slides": [
+            {
+                "page_number": 1,
+                "title": "Cached deck",
+                "content_points": ["Context"],
+                "slide_type": "title",
+            }
+        ],
+    }
+
+    class FakeProjectManager:
+        async def get_project(self, _project_id):
+            observed_sessions.append(get_current_ai_conversation_id())
+            return SimpleNamespace(outline=outline, confirmed_requirements={})
+
+    workflow = ProjectOutlineWorkflowService(
+        SimpleNamespace(project_manager=FakeProjectManager())
+    )
+
+    async def skip_stage_update(*_args, **_kwargs):
+        return None
+
+    workflow._outline_generation._streaming_service._update_outline_generation_stage = (
+        skip_stage_update
+    )
+
+    service = object.__new__(EnhancedPPTService)
+    service.project_outline_workflow = workflow
+
+    async def consume_first_event():
+        stream = service.generate_outline_streaming("project-1")
+        event = await anext(stream)
+        await stream.aclose()
+        return event
+
+    assert get_current_ai_conversation_id() is None
+    first_event = await consume_first_event()
+    assert '"step": "cached"' in first_event
+    assert get_current_ai_conversation_id() is None
+
+    second_event = await consume_first_event()
+    assert '"step": "cached"' in second_event
+    assert get_current_ai_conversation_id() is None
+    assert observed_sessions[0] != observed_sessions[1]
+
+
+@pytest.mark.asyncio
+async def test_slide_stream_early_close_restores_context_and_isolates_sessions():
+    observed_sessions = []
+    closed_sessions = []
+
+    async def inner_stream(_project_id):
+        session_id = get_current_ai_conversation_id()
+        observed_sessions.append(session_id)
+        try:
+            yield "first slide event"
+            yield "second slide event"
+        finally:
+            closed_sessions.append(session_id)
+
+    service = object.__new__(EnhancedPPTService)
+    authoring = object.__new__(SlideAuthoringService)
+    streaming = object.__new__(SlideStreamingService)
+    authoring._service = service
+    authoring._streaming_service = streaming
+    streaming._service = authoring
+    streaming._generate_slides_streaming = inner_stream
+    service.slide_authoring = authoring
+
+    async def consume_first_event():
+        stream = service.generate_slides_streaming("project-1")
+        event = await anext(stream)
+        await stream.aclose()
+        return event
+
+    assert get_current_ai_conversation_id() is None
+    assert await consume_first_event() == "first slide event"
+    assert get_current_ai_conversation_id() is None
+
+    assert await consume_first_event() == "first slide event"
+    assert get_current_ai_conversation_id() is None
+    assert observed_sessions[0] != observed_sessions[1]
+    assert closed_sessions == observed_sessions
+
+
+@pytest.mark.asyncio
+async def test_outline_repair_provider_failure_fails_without_fallback(tmp_path):
+    provider_calls = []
+    fallback_reads = []
+
+    class StubProviderService:
+        async def _text_completion_for_role(self, role, prompt=None, temperature=None):
+            provider_calls.append(role)
+            raise RuntimeError("MissingSessionID: x-opencode-session is required")
+
+    repair_service = ProjectOutlineRepairService(StubProviderService())
+
+    class DummyService:
+        def __init__(self):
+            self._validate_and_repair_outline_json = (
+                repair_service._validate_and_repair_outline_json
+            )
+
+        def _standardize_summeryfile_outline(self, outline):
+            return outline
+
+        def _extract_summeryanyfile_llm_call_count(self, _generator):
+            return 0
+
+        def _read_file_with_fallback_encoding(self, path):
+            fallback_reads.append(path)
+            return Path(path).read_text(encoding="utf-8")
+
+    class FakeOutline:
+        def to_dict(self):
+            return {"title": "Quarterly Review", "slides": []}
+
+    class FakeGenerator:
+        async def generate_from_file(self, *_args, **_kwargs):
+            return FakeOutline()
+
+    source_file = tmp_path / "source.md"
+    source_file.write_text("# Quarterly Review\n- revenue up\n", encoding="utf-8")
+    workflow = OutlineWorkflowService(DummyService())
+
+    async def create_generator(_request):
+        return FakeGenerator(), tmp_path
+
+    workflow._create_outline_generator = create_generator
+
+    result = await workflow.generate_outline_from_file(
+        _file_outline_request(source_file)
+    )
+
+    assert result.success is False
+    assert result.outline is None
+    assert fallback_reads == []
+    assert len(provider_calls) == 1
+    assert "MissingSessionID" in (result.error or "")
+
+
+@pytest.mark.asyncio
+async def test_chain_stream_early_exit_restores_context_and_closes_provider_stream():
+    """Early consumer exit must release the conversation scope and close the
+    provider stream while that scope is still active."""
+    from summeryanyfile.generators.chains import ChainManager
+
+    observed_sessions = []
+    closed_sessions = []
+
+    class FakeStreamChain:
+        async def astream(self, _inputs, _config):
+            observed_sessions.append(get_current_ai_conversation_id())
+            try:
+                yield "first"
+                yield "second"
+            finally:
+                closed_sessions.append(get_current_ai_conversation_id())
+
+    chain_manager = object.__new__(ChainManager)
+    chain_manager._chains = {"test": FakeStreamChain()}
+    config = {"configurable": {"conversation_id": "stream-session"}}
+
+    async def consume_one_chunk_and_close():
+        stream = chain_manager.stream_chain("test", {}, config)
+        async with aclosing(stream):
+            async for chunk in stream:
+                assert chunk == "first"
+                break
+        # Snapshot before returning control to the event loop: the provider
+        # stream must already be closed here, not left to a later finalizer tick.
+        return list(closed_sessions)
+
+    # (a) no ambient conversation: the scope must restore to the pre-entry None
+    assert get_current_ai_conversation_id() is None
+    assert await consume_one_chunk_and_close() == ["stream-session"]
+    assert get_current_ai_conversation_id() is None
+
+    # (b) production shape: an outer workflow already owns a conversation
+    with ai_conversation_context("outer"):
+        assert get_current_ai_conversation_id() == "outer"
+        assert await consume_one_chunk_and_close() == [
+            "stream-session",
+            "stream-session",
+        ]
+        assert get_current_ai_conversation_id() == "outer"
+
+    assert get_current_ai_conversation_id() is None
+    assert observed_sessions == ["stream-session", "stream-session"]
+
+
+@pytest.mark.asyncio
+async def test_chain_executor_stream_retry_releases_scope_after_consumer_failure():
+    """A consumer-side failure mid-stream must release the conversation scope
+    before the retry attempt starts, not leave it set for the caller."""
+    from summeryanyfile.generators.chains import ChainExecutor, ChainManager
+
+    observed_sessions = []
+    attempts = []
+
+    class FakeStreamChain:
+        async def astream(self, _inputs, _config):
+            observed_sessions.append(get_current_ai_conversation_id())
+            yield "first"
+            yield "second"
+
+    chain_manager = object.__new__(ChainManager)
+    chain_manager._chains = {"test": FakeStreamChain()}
+    executor = ChainExecutor(chain_manager, max_retries=2)
+
+    def chunk_callback(chunk):
+        attempts.append(chunk)
+        if len(attempts) == 1:
+            raise RuntimeError("stream consumer failed")
+        return None
+
+    config = {"configurable": {"conversation_id": "retry-session"}}
+
+    assert get_current_ai_conversation_id() is None
+    result = await executor.execute_with_retry_streaming(
+        "test", {}, config, chunk_callback
+    )
+
+    assert result == "firstsecond"
+    assert attempts == ["first", "first", "second"]
+    assert observed_sessions == ["retry-session", "retry-session"]
+    assert get_current_ai_conversation_id() is None

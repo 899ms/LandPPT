@@ -14,6 +14,7 @@ import time
 import uuid
 import urllib.parse
 import urllib.request
+from contextlib import aclosing
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -732,8 +733,13 @@ async def stream_slides_generation(
             pass
 
         async def generate_slides_stream():
-            async for chunk in user_ppt_service.generate_slides_streaming(project_id):
-                yield chunk
+            # Own the stream: on client disconnect the generator would otherwise
+            # be left to the loop's finalizer, which unwinds the conversation
+            # scope in a copied Context.
+            stream = user_ppt_service.generate_slides_streaming(project_id)
+            async with aclosing(stream):
+                async for chunk in stream:
+                    yield chunk
 
         return StreamingResponse(
             generate_slides_stream(),
