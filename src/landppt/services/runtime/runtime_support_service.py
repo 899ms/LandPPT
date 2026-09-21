@@ -144,8 +144,8 @@ class RuntimeSupportService:
     def _configure_summeryfile_api(self, generator, role: str='default'):
         return self._ai_runtime._configure_summeryfile_api(generator, role)
 
-    def _build_execution_context(self, role: str, current_ai_config: Optional[Dict[str, Any]]=None) -> ExecutionContext:
-        return self._ai_runtime._build_execution_context(role, current_ai_config)
+    def _build_execution_context(self, role: str, current_ai_config: Optional[Dict[str, Any]]=None, conversation_id: Optional[str] = None) -> ExecutionContext:
+        return self._ai_runtime._build_execution_context(role, current_ai_config, conversation_id)
 
     def _build_summeryanyfile_processing_config(self, *, processing_config_cls, execution_context: ExecutionContext, target_language: str, min_slides: int, max_slides: int, chunk_size: int, chunk_strategy: Any):
         return self._ai_runtime._build_summeryanyfile_processing_config(processing_config_cls=processing_config_cls, execution_context=execution_context, target_language=target_language, min_slides=min_slides, max_slides=max_slides, chunk_size=chunk_size, chunk_strategy=chunk_strategy)

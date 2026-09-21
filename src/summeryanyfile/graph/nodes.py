@@ -12,6 +12,7 @@ from ..core.models import PPTState
 from ..core.json_parser import JSONParser
 from ..generators.chains import ChainManager, ChainExecutor
 from ..utils.logger import LoggerMixin
+from landppt.services.runtime.ai_execution import is_provider_protocol_error
 
 logger = logging.getLogger(__name__)
 
@@ -113,6 +114,8 @@ class GraphNodes(LoggerMixin):
             
         except Exception as e:
             self.logger.error(f"文档结构分析失败: {e}")
+            if is_provider_protocol_error(e):
+                raise
             # 返回默认结构
             return {
                 "document_structure": {
@@ -191,6 +194,8 @@ class GraphNodes(LoggerMixin):
             
         except Exception as e:
             self.logger.error(f"初始PPT框架生成失败: {e}")
+            if is_provider_protocol_error(e):
+                raise
             # 返回默认框架
             return {
                 "ppt_title": "学术演示",
@@ -257,6 +262,8 @@ class GraphNodes(LoggerMixin):
             }
         except Exception as e:
             self.logger.error(f"流式初始 PPT 框架生成失败: {e}")
+            if is_provider_protocol_error(e):
+                raise
             return {
                 "ppt_title": "学术演示",
                 "total_pages": 15,
@@ -357,6 +364,8 @@ class GraphNodes(LoggerMixin):
             
         except Exception as e:
             self.logger.error(f"PPT大纲细化失败: {e}")
+            if is_provider_protocol_error(e):
+                raise
             # 继续处理下一个块
             return {
                 **state,
@@ -427,6 +436,8 @@ class GraphNodes(LoggerMixin):
             }
         except Exception as e:
             self.logger.error(f"流式细化 PPT 大纲失败: {e}")
+            if is_provider_protocol_error(e):
+                raise
             return {
                 **state,
                 "current_index": current_index + 1,

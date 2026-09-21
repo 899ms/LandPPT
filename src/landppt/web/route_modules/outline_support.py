@@ -5,6 +5,7 @@ Support helpers for outline and file-outline route modules.
 from __future__ import annotations
 
 import asyncio
+from contextlib import aclosing
 import json
 import re
 import tempfile
@@ -687,24 +688,26 @@ async def _stream_outline_from_confirmed_sources_v2(
             file_request = prepared_request["file_request"]
             last_ping_at = time.time()
 
-            async for event in user_ppt_service.generate_outline_from_file_streaming(file_request):
-                if event.get("error"):
-                    raise Exception(event["error"])
+            stream = user_ppt_service.generate_outline_from_file_streaming(file_request)
+            async with aclosing(stream):
+                async for event in stream:
+                    if event.get("error"):
+                        raise Exception(event["error"])
 
-                if event.get("outline"):
-                    outline = event["outline"]
-                    try:
-                        llm_call_count = max(0, int(event.get("llm_call_count") or 0))
-                    except Exception:
-                        llm_call_count = 0
-                    break
+                    if event.get("outline"):
+                        outline = event["outline"]
+                        try:
+                            llm_call_count = max(0, int(event.get("llm_call_count") or 0))
+                        except Exception:
+                            llm_call_count = 0
+                        break
 
-                yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+                    yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
 
-                now = time.time()
-                if now - last_ping_at >= 5:
-                    yield f"data: {json.dumps({'ping': True})}\n\n"
-                    last_ping_at = now
+                    now = time.time()
+                    if now - last_ping_at >= 5:
+                        yield f"data: {json.dumps({'ping': True})}\n\n"
+                        last_ping_at = now
 
             if not outline:
                 raise Exception("Failed to generate outline from uploaded files.")

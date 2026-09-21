@@ -8,6 +8,7 @@ import shutil
 import tempfile
 import time
 import uuid
+from contextlib import aclosing
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
@@ -178,8 +179,10 @@ class SlideAuthoringService:
             yield item
 
     async def generate_slides_streaming(self, project_id: str):
-        async for item in self._streaming_service.generate_slides_streaming(project_id):
-            yield item
+        stream = self._streaming_service.generate_slides_streaming(project_id)
+        async with aclosing(stream):
+            async for item in stream:
+                yield item
 
     async def _generate_slides_streaming_direct(self, project_id: str):
         async for item in self._streaming_service._generate_slides_streaming_direct(project_id):

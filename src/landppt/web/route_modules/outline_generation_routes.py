@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import time
+from contextlib import aclosing
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
@@ -131,37 +132,41 @@ async def stream_outline_generation(
                         user_id=user.id,
                     )
 
-                async for chunk in chunk_source:
-                    # Bill BEFORE yielding the completion event. Billing afterwards
-                    # meant a client that disconnected right after receiving `done`
-                    # closed the generator before the charge was applied.
-                    if not billed and _is_billable_provider(outline_provider_name):
-                        for line in str(chunk).splitlines():
-                            if not line.startswith("data: "):
-                                continue
-                            try:
-                                import json
-                                payload = json.loads(line[6:])
-                            except Exception:
-                                continue
-                            if payload.get("done") is True:
-                                billed = True
-                                llm_call_count = payload.get("llm_call_count", 1)
+                # Own the stream: on client disconnect this generator would
+                # otherwise be left to the loop's finalizer, which unwinds the
+                # conversation scope in a copied Context.
+                async with aclosing(chunk_source):
+                    async for chunk in chunk_source:
+                        # Bill BEFORE yielding the completion event. Billing afterwards
+                        # meant a client that disconnected right after receiving `done`
+                        # closed the generator before the charge was applied.
+                        if not billed and _is_billable_provider(outline_provider_name):
+                            for line in str(chunk).splitlines():
+                                if not line.startswith("data: "):
+                                    continue
                                 try:
-                                    llm_call_count = max(0, int(llm_call_count))
+                                    import json
+                                    payload = json.loads(line[6:])
                                 except Exception:
-                                    llm_call_count = 1
+                                    continue
+                                if payload.get("done") is True:
+                                    billed = True
+                                    llm_call_count = payload.get("llm_call_count", 1)
+                                    try:
+                                        llm_call_count = max(0, int(llm_call_count))
+                                    except Exception:
+                                        llm_call_count = 1
 
-                                if llm_call_count > 0:
-                                    await consume_credits_for_operation(
-                                        user.id,
-                                        "outline_generation",
-                                        llm_call_count,
-                                        description=f"大纲生成(流式): {project.topic}",
-                                        reference_id=project_id,
-                                        provider_name=outline_provider_name,
-                                    )
-                    yield chunk
+                                    if llm_call_count > 0:
+                                        await consume_credits_for_operation(
+                                            user.id,
+                                            "outline_generation",
+                                            llm_call_count,
+                                            description=f"大纲生成(流式): {project.topic}",
+                                            reference_id=project_id,
+                                            provider_name=outline_provider_name,
+                                        )
+                        yield chunk
             except Exception as e:
                 import json
                 # Record the failure: leaving the stage "running" made the todo board

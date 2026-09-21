@@ -193,6 +193,10 @@ class SlideEditAgentRun:
 
     def _chat_fn(self):
         async def chat(**kwargs: Any):
+            kwargs.setdefault(
+                "conversation_id",
+                self.context.request.conversation_id or self.context.run_id,
+            )
             return await self.user_ppt_service._chat_completion_for_role(self.role, **kwargs)
 
         return chat

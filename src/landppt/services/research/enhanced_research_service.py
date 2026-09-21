@@ -21,6 +21,7 @@ from ..deep_research_service import DEEPResearchService, ResearchReport, Researc
 from ..prompts.system_prompts import SystemPrompts
 from .searxng_provider import SearXNGContentProvider, SearXNGSearchResponse
 from .content_extractor import WebContentExtractor, ExtractedContent
+from ..runtime.ai_execution import scoped_ai_conversation
 
 logger = logging.getLogger(__name__)
 
@@ -370,6 +371,7 @@ class EnhancedResearchService:
 
         return 0
     
+    @scoped_ai_conversation("enhanced-research")
     async def conduct_enhanced_research(
         self,
         topic: str,

@@ -23,6 +23,10 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Streamin
 from pydantic import BaseModel
 
 from ...ai import AIMessage, MessageRole, get_ai_provider, get_role_provider
+from ...ai.providers import (
+    build_opencode_client_headers,
+    build_opencode_test_session_headers,
+)
 from ...api.models import FileOutlineGenerationRequest, PPTGenerationRequest, PPTProject, TodoBoard
 from ...auth.middleware import get_current_user_optional, get_current_user_required
 from ...core.config import ai_config, app_config, resolve_timeout_seconds
@@ -793,6 +797,8 @@ async def test_provider_connection(
                 'Authorization': f'Bearer {api_key}',
                 'Content-Type': 'application/json'
             }
+            headers.update(build_opencode_client_headers(base_url))
+            headers.update(build_opencode_test_session_headers(base_url))
 
             if use_openai_responses_api:
                 payload = {
@@ -972,6 +978,8 @@ async def test_openai_provider_proxy(
                 'Authorization': f'Bearer {api_key}',
                 'Content-Type': 'application/json'
             }
+            headers.update(build_opencode_client_headers(base_url))
+            headers.update(build_opencode_test_session_headers(base_url))
             
             if use_responses_api:
                 payload = {

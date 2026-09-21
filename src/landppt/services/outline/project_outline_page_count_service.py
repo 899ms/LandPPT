@@ -24,7 +24,7 @@ from ...api.models import (
 from ...ai import get_ai_provider, get_role_provider, AIMessage, MessageRole
 from ...ai.base import TextContent, ImageContent
 from ...core.config import ai_config, app_config
-from ..runtime.ai_execution import ExecutionContext
+from ..runtime.ai_execution import ExecutionContext, scoped_ai_conversation
 from ..prompts import prompts_manager
 from ..research.enhanced_research_service import EnhancedResearchService
 from ..research.enhanced_report_generator import EnhancedReportGenerator
@@ -67,6 +67,7 @@ class ProjectOutlinePageCountService:
                 project_id, stage_error
             )
 
+    @scoped_ai_conversation("outline")
     async def _execute_outline_generation(self, project_id: str, confirmed_requirements: Dict[str, Any], system_prompt: str) -> str:
         """Execute outline generation as a complete task"""
         try:

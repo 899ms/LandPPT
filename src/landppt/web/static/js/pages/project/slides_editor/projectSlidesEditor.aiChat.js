@@ -10,6 +10,13 @@ function destroyAIAssistantMessageRender(messageDiv) {
     window.projectSlidesEditorPretext.destroyAssistantMessageRender(messageDiv);
 }
 
+function getAIChatSessionId(slideIndex = currentSlideIndex) {
+    if (!aiChatSessionIds[slideIndex]) {
+        aiChatSessionIds[slideIndex] = newLandPPTConversationId();
+    }
+    return aiChatSessionIds[slideIndex];
+}
+
 function addAIMessage(content, type = 'assistant', messageId = null) {
     const messagesContainer = document.getElementById('aiChatMessages');
 
@@ -146,6 +153,7 @@ function clearAIMessages() {
     // 清除当前幻灯片的对话历史
     if (currentSlideIndex >= 0) {
         aiChatHistory[currentSlideIndex] = [];
+        aiChatSessionIds[currentSlideIndex] = newLandPPTConversationId();
     }
 }
 
@@ -975,6 +983,7 @@ async function buildSidebarAgentPayload(message, chatHistoryForContext) {
         userRequest: message,
         slideOutline: slideOutline,
         chatHistory: chatHistoryForContext,
+        conversation_id: getAIChatSessionId(),
         images: getAllUploadedImages(),
         visionEnabled: visionModeEnabled,
         slideScreenshot: slideScreenshot,

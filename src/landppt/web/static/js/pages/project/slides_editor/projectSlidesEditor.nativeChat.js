@@ -4,6 +4,13 @@ const nativeChatHistory = {}; // key: slideIndex, value: [{role, content, timest
 let isNativeImageUploading = false;
 const nativeUploadedImagesBySlide = {}; // key: slideIndex, value: [{id,name,size,url}]
 
+function getNativeChatSessionId(slideIndex = currentSlideIndex) {
+    if (!nativeChatSessionIds[slideIndex]) {
+        nativeChatSessionIds[slideIndex] = newLandPPTConversationId();
+    }
+    return nativeChatSessionIds[slideIndex];
+}
+
 function setNativeAssistantMessageText(messageDiv, content) {
     return window.projectSlidesEditorPretext.setAssistantMessageText(messageDiv, content);
 }
@@ -99,6 +106,7 @@ async function clearNativeChatContext() {
     }
 
     nativeChatHistory[currentSlideIndex] = [];
+    nativeChatSessionIds[currentSlideIndex] = newLandPPTConversationId();
     nativeUploadedImagesBySlide[currentSlideIndex] = [];
     renderNativeChatMessages();
     renderNativeUploadedImages();
@@ -449,6 +457,7 @@ async function sendNativeChatMessage() {
             slideContent: currentSlide.html_content,
             userRequest: message,
             chatHistory: chatHistory,
+            conversation_id: getNativeChatSessionId(),
             images: referencedImages
         };
 

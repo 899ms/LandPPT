@@ -8,6 +8,7 @@ import shutil
 import tempfile
 import time
 import uuid
+from contextlib import aclosing
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
@@ -72,11 +73,13 @@ class ProjectOutlineWorkflowService:
         return self._outline_generation._create_default_outline(request)
 
     async def generate_outline_streaming(self, project_id: str, *, force_regenerate: bool = False):
-        async for item in self._outline_generation.generate_outline_streaming(
+        stream = self._outline_generation.generate_outline_streaming(
             project_id,
             force_regenerate=force_regenerate,
-        ):
-            yield item
+        )
+        async with aclosing(stream):
+            async for item in stream:
+                yield item
 
     async def _validate_and_repair_outline_json(self, outline_data: Dict[str, Any], confirmed_requirements: Dict[str, Any]) -> Dict[str, Any]:
         return await self._outline_generation._validate_and_repair_outline_json(outline_data, confirmed_requirements)

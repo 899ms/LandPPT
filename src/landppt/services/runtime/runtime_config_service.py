@@ -206,10 +206,10 @@ class RuntimeConfigService:
         self.config = self._get_current_ai_config()
         logger.info(f"AI配置已更新: provider={self.config['llm_provider']}, model={self.config['llm_model']}")
 
-    def _build_execution_context(self, role: str, current_ai_config: Optional[Dict[str, Any]]=None) -> ExecutionContext:
+    def _build_execution_context(self, role: str, current_ai_config: Optional[Dict[str, Any]]=None, conversation_id: Optional[str] = None) -> ExecutionContext:
         resolved_config = current_ai_config or self._get_current_ai_config()
         source = 'user_db' if self.user_id is not None else 'global_config'
-        return ExecutionContext.from_mapping(role, resolved_config, user_id=self.user_id, source=source)
+        return ExecutionContext.from_mapping(role, resolved_config, user_id=self.user_id, source=source, conversation_id=conversation_id)
 
     def _build_summeryanyfile_processing_config(self, *, processing_config_cls, execution_context: ExecutionContext, target_language: str, min_slides: int, max_slides: int, chunk_size: int, chunk_strategy: Any):
         config_kwargs = execution_context.to_processing_config_kwargs()

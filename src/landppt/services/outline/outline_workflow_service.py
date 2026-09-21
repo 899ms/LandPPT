@@ -5,6 +5,7 @@ Outline workflow orchestration extracted from EnhancedPPTService.
 from __future__ import annotations
 
 import asyncio
+from contextlib import aclosing
 import json
 import logging
 import shutil
@@ -13,6 +14,12 @@ from typing import Any
 
 from ...api.models import FileOutlineGenerationResponse
 from ...core.file_access import UnsafeFilePathError, validate_client_file_path
+from ..runtime.ai_execution import (
+    ai_conversation_context,
+    get_current_ai_conversation_id,
+    is_provider_protocol_error,
+    new_ai_conversation_id,
+)
 from ...utils.thread_pool import run_blocking_io
 from .outline_workflow_support import (
     build_file_info,
@@ -53,7 +60,14 @@ class OutlineWorkflowService:
             chunk_size,
         )
 
-        execution_context = svc._build_execution_context("outline", current_ai_config)
+        conversation_id = (
+            getattr(request, "conversation_id", None)
+            or get_current_ai_conversation_id()
+            or new_ai_conversation_id("file-outline")
+        )
+        execution_context = svc._build_execution_context(
+            "outline", current_ai_config, conversation_id
+        )
         config = svc._build_summeryanyfile_processing_config(
             processing_config_cls=ProcessingConfig,
             execution_context=execution_context,
@@ -81,6 +95,17 @@ class OutlineWorkflowService:
         return generator, cache_dir
 
     async def generate_outline_from_file_streaming(self, request: Any):
+        conversation_id = (
+            getattr(request, "conversation_id", None)
+            or get_current_ai_conversation_id()
+            or new_ai_conversation_id("file-outline")
+        )
+        with ai_conversation_context(conversation_id):
+            async with aclosing(self._generate_outline_from_file_streaming(request)) as stream:
+                async for event in stream:
+                    yield event
+
+    async def _generate_outline_from_file_streaming(self, request: Any):
         svc = self._service
         try:
             logger.info("Streaming file outline generation for %s", request.filename)
@@ -101,7 +126,7 @@ class OutlineWorkflowService:
                 except Exception:
                     pass
 
-                async for event in generator.stream_generate_from_file(
+                stream = generator.stream_generate_from_file(
                     request.file_path,
                     project_topic=request.topic or "",
                     project_scenario=request.scenario or "general",
@@ -114,38 +139,40 @@ class OutlineWorkflowService:
                     min_pages=getattr(request, "min_pages", None),
                     max_pages=getattr(request, "max_pages", None),
                     fixed_pages=getattr(request, "fixed_pages", None),
-                ):
-                    outline_obj = event.get("outline_obj")
-                    if not outline_obj:
-                        yield event
-                        continue
+                )
+                async with aclosing(stream):
+                    async for event in stream:
+                        outline_obj = event.get("outline_obj")
+                        if not outline_obj:
+                            yield event
+                            continue
 
-                    llm_call_count = int(
-                        event.get("llm_call_count")
-                        or svc._extract_summeryanyfile_llm_call_count(generator)
-                        or 0
-                    )
-                    yield {
-                        "status": {
-                            "step": "validating",
-                            "message": "Validating generated outline...",
-                            "progress": 0.94,
+                        llm_call_count = int(
+                            event.get("llm_call_count")
+                            or svc._extract_summeryanyfile_llm_call_count(generator)
+                            or 0
+                        )
+                        yield {
+                            "status": {
+                                "step": "validating",
+                                "message": "Validating generated outline...",
+                                "progress": 0.94,
+                            }
                         }
-                    }
 
-                    outline = svc._standardize_summeryfile_outline(outline_obj.to_dict())
-                    outline = await svc._validate_and_repair_outline_json(
-                        outline,
-                        build_validation_requirements(
-                            request,
-                            outline.get("title", "Document Presentation"),
-                        ),
-                    )
-                    yield {
-                        "outline": outline,
-                        "llm_call_count": max(llm_call_count, 0),
-                    }
-                    return
+                        outline = svc._standardize_summeryfile_outline(outline_obj.to_dict())
+                        outline = await svc._validate_and_repair_outline_json(
+                            outline,
+                            build_validation_requirements(
+                                request,
+                                outline.get("title", "Document Presentation"),
+                            ),
+                        )
+                        yield {
+                            "outline": outline,
+                            "llm_call_count": max(llm_call_count, 0),
+                        }
+                        return
             except ImportError as exc:
                 logger.warning(
                     "summeryanyfile unavailable for streaming file outline generation: %s",
@@ -153,6 +180,8 @@ class OutlineWorkflowService:
                 )
             except Exception as exc:
                 logger.error("summeryanyfile streaming file outline generation failed: %s", exc)
+                if is_provider_protocol_error(exc):
+                    raise
 
             fallback_result = await self._generate_outline_from_file_fallback(request)
             if not fallback_result.success or not fallback_result.outline:
@@ -184,6 +213,17 @@ class OutlineWorkflowService:
             yield {"error": str(exc)}
 
     async def generate_outline_from_file(
+        self, request: Any
+    ) -> FileOutlineGenerationResponse:
+        conversation_id = (
+            getattr(request, "conversation_id", None)
+            or get_current_ai_conversation_id()
+            or new_ai_conversation_id("file-outline")
+        )
+        with ai_conversation_context(conversation_id):
+            return await self._generate_outline_from_file(request)
+
+    async def _generate_outline_from_file(
         self, request: Any
     ) -> FileOutlineGenerationResponse:
         svc = self._service
@@ -257,6 +297,8 @@ class OutlineWorkflowService:
                 # failure when it can't produce anything usable instead of shipping
                 # a mojibake outline as success.
                 logger.error("summeryanyfile outline generation failed, trying fallback: %s", exc)
+                if is_provider_protocol_error(exc):
+                    raise
                 try:
                     return await self._generate_outline_from_file_fallback(request)
                 except Exception as fallback_exc:

@@ -12,6 +12,7 @@ import os
 import tempfile
 import base64
 import shutil
+from contextlib import aclosing
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, Any, List, Optional
@@ -233,8 +234,11 @@ class EnhancedPPTService(PPTService):
         self,
         role: str,
         current_ai_config: Optional[Dict[str, Any]] = None,
+        conversation_id: Optional[str] = None,
     ) -> ExecutionContext:
-        return self.runtime_support._build_execution_context(role, current_ai_config)
+        if conversation_id is None:
+            return self.runtime_support._build_execution_context(role, current_ai_config)
+        return self.runtime_support._build_execution_context(role, current_ai_config, conversation_id)
 
 
     def _build_summeryanyfile_processing_config(
@@ -303,11 +307,13 @@ class EnhancedPPTService(PPTService):
 
 
     async def generate_outline_streaming(self, project_id: str, *, force_regenerate: bool = False):
-        async for item in self.project_outline_workflow.generate_outline_streaming(
+        stream = self.project_outline_workflow.generate_outline_streaming(
             project_id,
             force_regenerate=force_regenerate,
-        ):
-            yield item
+        )
+        async with aclosing(stream):
+            async for item in stream:
+                yield item
 
 
     async def _validate_and_repair_outline_json(self, outline_data: Dict[str, Any], confirmed_requirements: Dict[str, Any]) -> Dict[str, Any]:
@@ -376,8 +382,10 @@ class EnhancedPPTService(PPTService):
         return await self.slide_authoring._is_slides_generation_cancelled(project_id, cache)
 
     async def generate_slides_streaming(self, project_id: str):
-        async for item in self.slide_authoring.generate_slides_streaming(project_id):
-            yield item
+        stream = self.slide_authoring.generate_slides_streaming(project_id)
+        async with aclosing(stream):
+            async for item in stream:
+                yield item
 
 
     async def _generate_slides_streaming_impl(self, project_id: str):
@@ -648,8 +656,10 @@ class EnhancedPPTService(PPTService):
 
 
     async def generate_outline_from_file_streaming(self, request):
-        async for event in self.outline_workflow.generate_outline_from_file_streaming(request):
-            yield event
+        stream = self.outline_workflow.generate_outline_from_file_streaming(request)
+        async with aclosing(stream):
+            async for event in stream:
+                yield event
 
     async def generate_outline_from_file(self, request) -> FileOutlineGenerationResponse:
         return await self.outline_workflow.generate_outline_from_file(request)

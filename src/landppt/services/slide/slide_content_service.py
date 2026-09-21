@@ -24,7 +24,7 @@ from ...api.models import (
 from ...ai import get_ai_provider, get_role_provider, AIMessage, MessageRole
 from ...ai.base import TextContent, ImageContent
 from ...core.config import ai_config, app_config
-from ..runtime.ai_execution import ExecutionContext
+from ..runtime.ai_execution import ExecutionContext, scoped_ai_conversation
 from ..prompts import prompts_manager
 from ..research.enhanced_research_service import EnhancedResearchService
 from ..research.enhanced_report_generator import EnhancedReportGenerator
@@ -48,6 +48,7 @@ class SlideContentService:
     def __getattr__(self, name: str):
         return getattr(self._service, name)
 
+    @scoped_ai_conversation("slide-generation")
     async def generate_slides_parallel(self, slide_requests: List[Dict[str, Any]], scenario: str, topic: str, language: str='zh') -> List[str]:
         """并行生成多个幻灯片内容
                 
@@ -95,6 +96,7 @@ class SlideContentService:
                     results.append(f'• {slide_title}的相关内容\n• 详细说明和分析\n• 实际应用案例')
             return results
 
+    @scoped_ai_conversation("slide-generation")
     async def generate_slide_content(self, slide_title: str, scenario: str, topic: str, language: str='zh') -> str:
         """Generate slide content using AI"""
         try:

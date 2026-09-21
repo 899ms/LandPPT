@@ -90,6 +90,7 @@ class PPTGenerationRequest(BaseModel):
     uploaded_content: Optional[str] = Field(None, description="Content from uploaded files")
     # User ownership
     user_id: Optional[int] = Field(None, description="User ID for project ownership")
+    conversation_id: Optional[str] = Field(None, description="Logical AI conversation identity for this workflow")
     # 目标受众和风格相关参数
     target_audience: Optional[str] = Field(None, description="Target audience for the PPT")
     custom_audience: Optional[str] = Field(None, description="Custom audience details")
@@ -217,6 +218,7 @@ class FileOutlineGenerationRequest(BaseModel):
     include_transition_pages: bool = Field(False, description="Whether to add transition slides between major sections")
     file_processing_mode: str = Field("markitdown", description="File processing mode")
     content_analysis_depth: str = Field("standard", description="Content analysis depth")
+    conversation_id: Optional[str] = Field(None, description="Logical AI conversation identity for this workflow")
 
 class FileOutlineGenerationResponse(BaseModel):
     """从文件生成PPT大纲的响应模型"""

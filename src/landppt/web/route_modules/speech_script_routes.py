@@ -31,6 +31,7 @@ from ...database.models import User
 from ...services.enhanced_ppt_service import EnhancedPPTService
 from ...services.pdf_to_pptx_converter import get_pdf_to_pptx_converter
 from ...services.pyppeteer_pdf_converter import get_pdf_converter
+from ...services.runtime.ai_execution import scoped_ai_conversation
 from ...utils.thread_pool import run_blocking_io, to_thread
 from .support import (
     _apply_no_store_headers,
@@ -176,6 +177,7 @@ async def generate_speech_script(
         )
 
         # Start async generation task
+        @scoped_ai_conversation("speech-script")
         async def generate_async():
             try:
                 logger.info(f"Starting async generation for task {task_id}")
@@ -539,6 +541,7 @@ async def humanize_speech_scripts(
         )
         await progress_tracker.update_progress_async(task_id, message="开始一键人话...")
 
+        @scoped_ai_conversation("speech-script-humanize")
         async def humanize_async():
             repo = None
             try:

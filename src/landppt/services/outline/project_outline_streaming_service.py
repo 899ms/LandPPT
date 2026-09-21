@@ -8,6 +8,7 @@ import shutil
 import tempfile
 import time
 import uuid
+from contextlib import aclosing
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
@@ -24,7 +25,13 @@ from ...api.models import (
 from ...ai import get_ai_provider, get_role_provider, AIMessage, MessageRole
 from ...ai.base import TextContent, ImageContent
 from ...core.config import ai_config, app_config
-from ..runtime.ai_execution import ExecutionContext
+from ..runtime.ai_execution import (
+    ExecutionContext,
+    ai_conversation_context,
+    get_current_ai_conversation_id,
+    is_provider_protocol_error,
+    new_ai_conversation_id,
+)
 from ..prompts import prompts_manager
 from ..research.enhanced_research_service import EnhancedResearchService
 from ..research.enhanced_report_generator import EnhancedReportGenerator
@@ -207,6 +214,8 @@ class ProjectOutlineStreamingService:
                     last_ping_at = now
             research_report = await research_task
         except Exception as research_error:
+            if is_provider_protocol_error(research_error):
+                raise
             if provider == 'enhanced' and getattr(self, 'research_service', None) is not None:
                 logger.warning('Enhanced research failed for project %s, falling back to legacy research: %s', project_id, research_error)
                 yield await self._build_streaming_research_status_event('research_fallback', '增强研究不可用，正在切换到标准研究...', 0.05)
@@ -239,6 +248,8 @@ class ProjectOutlineStreamingService:
                             last_ping_at = now
                     research_report = await research_task
                 except Exception as fallback_error:
+                    if is_provider_protocol_error(fallback_error):
+                        raise
                     logger.warning('Legacy research fallback failed for project %s, proceeding without research context: %s', project_id, fallback_error)
                     yield await self._build_streaming_research_status_event('research_skip', '联网研究失败，改为直接生成大纲...', 0.08)
                     return
@@ -295,21 +306,25 @@ class ProjectOutlineStreamingService:
             structured_outline = None
             llm_call_count = 0
             last_ping_at = time.time()
-            async for event in self.generate_outline_from_file_streaming(file_request):
-                if event.get('error'):
-                    raise ValueError(event['error'])
-                if event.get('outline'):
-                    structured_outline = event['outline']
-                    try:
-                        llm_call_count = max(0, int(event.get('llm_call_count') or 0))
-                    except Exception:
-                        llm_call_count = 0
-                    break
-                yield f'data: {json.dumps(event, ensure_ascii=False)}\n\n'
-                now = time.time()
-                if now - last_ping_at >= 5:
-                    yield f"data: {json.dumps({'ping': True})}\n\n"
-                    last_ping_at = now
+            # Own the nested file-outline stream: breaking out on the first
+            # outline would otherwise abandon it to the loop's finalizer, which
+            # unwinds its conversation scope in a copied Context.
+            async with aclosing(self.generate_outline_from_file_streaming(file_request)) as file_stream:
+                async for event in file_stream:
+                    if event.get('error'):
+                        raise ValueError(event['error'])
+                    if event.get('outline'):
+                        structured_outline = event['outline']
+                        try:
+                            llm_call_count = max(0, int(event.get('llm_call_count') or 0))
+                        except Exception:
+                            llm_call_count = 0
+                        break
+                    yield f'data: {json.dumps(event, ensure_ascii=False)}\n\n'
+                    now = time.time()
+                    if now - last_ping_at >= 5:
+                        yield f"data: {json.dumps({'ping': True})}\n\n"
+                        last_ping_at = now
             if structured_outline:
                 if 'metadata' not in structured_outline:
                     structured_outline['metadata'] = {}
@@ -332,6 +347,19 @@ class ProjectOutlineStreamingService:
         return
 
     async def generate_outline_streaming(self, project_id: str, *, force_regenerate: bool = False):
+        conversation_id = (
+            get_current_ai_conversation_id()
+            or new_ai_conversation_id("outline")
+        )
+        with ai_conversation_context(conversation_id):
+            stream = self._generate_outline_streaming(
+                project_id, force_regenerate=force_regenerate
+            )
+            async with aclosing(stream):
+                async for event in stream:
+                    yield event
+
+    async def _generate_outline_streaming(self, project_id: str, *, force_regenerate: bool = False):
         """Generate outline with streaming output"""
         try:
             project = await self.project_manager.get_project(project_id)
@@ -413,34 +441,40 @@ class ProjectOutlineStreamingService:
             if project.project_metadata and isinstance(project.project_metadata, dict):
                 network_mode = project.project_metadata.get('network_mode', False)
 
-            async for research_event in self._run_streaming_outline_research(project_id, project, confirmed_requirements, network_mode):
-                if isinstance(research_event, str):
-                    yield research_event
-                    continue
-                if not isinstance(research_event, dict):
-                    continue
+            # Own the research stream for the same reason: this loop returns as
+            # soon as it has an outline, which would abandon the research
+            # generator and the file-outline stream nested inside it.
+            async with aclosing(
+                self._run_streaming_outline_research(project_id, project, confirmed_requirements, network_mode)
+            ) as research_stream:
+                async for research_event in research_stream:
+                    if isinstance(research_event, str):
+                        yield research_event
+                        continue
+                    if not isinstance(research_event, dict):
+                        continue
 
-                structured_outline = research_event.get('outline')
-                if structured_outline:
-                    project.outline = structured_outline
-                    project.updated_at = time.time()
-                    try:
-                        from ..db_project_manager import DatabaseProjectManager
-                        db_manager = DatabaseProjectManager()
-                        save_success = await db_manager.save_project_outline(project_id, project.outline)
-                        if save_success:
-                            logger.info(f'✅ Successfully saved research-enhanced outline to database for project {project_id}')
-                            projects_cache = getattr(self.project_manager, 'projects', None)
-                            if isinstance(projects_cache, dict):
-                                projects_cache[project_id] = project
-                        else:
-                            logger.error(f'❌ Failed to save research-enhanced outline to database for project {project_id}')
-                    except Exception as save_error:
-                        logger.error(f'❌ Exception while saving research-enhanced outline: {str(save_error)}')
-                    await self._update_outline_generation_stage(project_id, structured_outline)
-                    yield f"data: {json.dumps({'outline': structured_outline}, ensure_ascii=False)}\n\n"
-                    yield f"data: {json.dumps({'done': True, 'llm_call_count': research_event.get('llm_call_count', 0)})}\n\n"
-                    return
+                    structured_outline = research_event.get('outline')
+                    if structured_outline:
+                        project.outline = structured_outline
+                        project.updated_at = time.time()
+                        try:
+                            from ..db_project_manager import DatabaseProjectManager
+                            db_manager = DatabaseProjectManager()
+                            save_success = await db_manager.save_project_outline(project_id, project.outline)
+                            if save_success:
+                                logger.info(f'✅ Successfully saved research-enhanced outline to database for project {project_id}')
+                                projects_cache = getattr(self.project_manager, 'projects', None)
+                                if isinstance(projects_cache, dict):
+                                    projects_cache[project_id] = project
+                            else:
+                                logger.error(f'❌ Failed to save research-enhanced outline to database for project {project_id}')
+                        except Exception as save_error:
+                            logger.error(f'❌ Exception while saving research-enhanced outline: {str(save_error)}')
+                        await self._update_outline_generation_stage(project_id, structured_outline)
+                        yield f"data: {json.dumps({'outline': structured_outline}, ensure_ascii=False)}\n\n"
+                        yield f"data: {json.dumps({'done': True, 'llm_call_count': research_event.get('llm_call_count', 0)})}\n\n"
+                        return
             page_count_settings = confirmed_requirements.get('page_count_settings', {})
             page_count_mode = page_count_settings.get('mode', 'ai_decide')
             page_count_instruction = ''

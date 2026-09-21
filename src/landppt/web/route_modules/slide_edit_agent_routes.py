@@ -107,6 +107,7 @@ async def stream_slide_edit_agent(
 
     run_id = (request.runId or "").strip() or new_run_id()
     request.runId = run_id
+    request.conversation_id = (request.conversation_id or "").strip() or run_id
 
     has_credits, required, balance = await check_credits_for_operation(
         user.id,
