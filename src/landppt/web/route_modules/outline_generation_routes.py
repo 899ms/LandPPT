@@ -9,11 +9,11 @@ import time
 from contextlib import aclosing
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import StreamingResponse
 
 from ...api.models import FileOutlineGenerationRequest, PPTGenerationRequest
 from ...auth.middleware import get_current_user_required
 from ...database.models import User
+from ..responses import ClosingStreamingResponse
 from .outline_support import (
     _extract_saved_file_outline,
     _is_billable_provider,
@@ -66,7 +66,7 @@ async def stream_outline_generation(
                 yield f"data: {json.dumps({'outline': existing_outline}, ensure_ascii=False)}\n\n"
                 yield f"data: {json.dumps({'done': True, 'llm_call_count': 0})}\n\n"
 
-            return StreamingResponse(
+            return ClosingStreamingResponse(
                 generate_saved_outline(),
                 media_type="text/event-stream",
                 headers={
@@ -88,7 +88,7 @@ async def stream_outline_generation(
             async def generate():
                 import json
                 yield f"data: {json.dumps({'error': f'积分不足，大纲生成需要 {required} 积分，当前余额 {balance} 积分'})}\n\n"
-            return StreamingResponse(
+            return ClosingStreamingResponse(
                 generate(),
                 media_type="text/event-stream",
                 headers={
@@ -183,7 +183,7 @@ async def stream_outline_generation(
                 error_response = {'error': str(e)}
                 yield f"data: {json.dumps(error_response)}\n\n"
 
-        return StreamingResponse(
+        return ClosingStreamingResponse(
             generate(),
             media_type="text/event-stream",
             headers={
