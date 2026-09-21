@@ -20,7 +20,7 @@ from typing import Any, Dict, List, Optional
 
 import aiohttp
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, Response, UploadFile
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from pydantic import BaseModel
 
 from ...ai import AIMessage, MessageRole, get_ai_provider, get_role_provider
@@ -34,6 +34,7 @@ from ...services.enhanced_ppt_service import EnhancedPPTService
 from ...services.pdf_to_pptx_converter import get_pdf_to_pptx_converter
 from ...services.pyppeteer_pdf_converter import get_pdf_converter
 from ...utils.thread_pool import run_blocking_io, to_thread
+from ..responses import ClosingStreamingResponse
 from .support import (
     _apply_no_store_headers,
     check_credits_for_operation,
@@ -718,7 +719,7 @@ async def stream_slides_generation(
                 if metadata.get("template_mode") == "free" and not metadata.get("free_template_confirmed"):
                     async def blocked_stream():
                         yield f"data: {json.dumps({'type': 'error', 'message': '自由模板尚未确认，请先在预览中确认/保存模板后再开始生成PPT。'})}\n\n"
-                    return StreamingResponse(
+                    return ClosingStreamingResponse(
                         blocked_stream(),
                         media_type="text/event-stream",
                         headers={
@@ -741,7 +742,7 @@ async def stream_slides_generation(
                 async for chunk in stream:
                     yield chunk
 
-        return StreamingResponse(
+        return ClosingStreamingResponse(
             generate_slides_stream(),
             media_type="text/event-stream",
             headers={

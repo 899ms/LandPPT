@@ -19,6 +19,7 @@ from contextlib import aclosing
 from types import SimpleNamespace
 
 import pytest
+from starlette.requests import ClientDisconnect
 
 from landppt.services.runtime.ai_execution import (
     ai_conversation_context,
@@ -38,6 +39,8 @@ class _Recorder:
             yield "payload-1"
             yield "payload-2"
         finally:
+            # Provider shutdown can itself await network/resource cleanup.
+            await asyncio.sleep(0)
             self.events.append((tag + ":provider:closed", get_current_ai_conversation_id()))
 
     def closed(self, name):
@@ -79,8 +82,53 @@ def _project(requirements=None):
     )
 
 
+async def _disconnect_response(response, mode):
+    """Exercise ASGI response handling without manually closing the body iterator."""
+    sending = asyncio.Event()
+    request_contexts = []
+
+    async def receive():
+        await sending.wait()
+        return {"type": "http.disconnect"}
+
+    async def send(message):
+        if message["type"] != "http.response.body" or not message.get("body"):
+            return
+        sending.set()
+        if mode == "send_error":
+            raise OSError("client disconnected")
+        if mode == "cancel":
+            asyncio.get_running_loop().call_soon(asyncio.current_task().cancel)
+        # Keep the iterator suspended at yield while the send is interrupted.
+        await asyncio.Event().wait()
+
+    async def request():
+        spec_version = "2.3" if mode == "disconnect" else "2.4"
+        try:
+            await response(
+                {"type": "http", "asgi": {"spec_version": spec_version}},
+                receive,
+                send,
+            )
+        finally:
+            request_contexts.append(get_current_ai_conversation_id())
+
+    task = asyncio.create_task(request())
+    if mode == "send_error":
+        with pytest.raises(ClientDisconnect):
+            await asyncio.wait_for(task, timeout=5)
+    elif mode == "cancel":
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(task, timeout=5)
+    else:
+        await asyncio.wait_for(task, timeout=5)
+    assert sending.is_set()
+    assert request_contexts == [None]
+
+
 @pytest.mark.asyncio
-async def test_outline_route_closes_forwarded_stream_on_disconnect(monkeypatch):
+@pytest.mark.parametrize("mode", ["send_error", "disconnect", "cancel"])
+async def test_outline_route_closes_forwarded_stream_on_disconnect(monkeypatch, mode):
     """The outline SSE route must close the service stream it forwards."""
     import landppt.web.route_modules.outline_generation_routes as routes
     from landppt.services.enhanced_ppt_service import EnhancedPPTService
@@ -127,20 +175,15 @@ async def test_outline_route_closes_forwarded_stream_on_disconnect(monkeypatch):
         "project-1", False, SimpleNamespace(id=1)
     )
 
-    consumed = 0
-    async with aclosing(response.body_iterator) as stream:
-        async for _chunk in stream:
-            consumed += 1
-            break  # client disconnect
-
-    assert consumed == 1
+    await _disconnect_response(response, mode)
     assert recorder.closed("outline:closed"), recorder.names()
     assert recorder.closed("outline:provider:closed"), recorder.names()
     assert get_current_ai_conversation_id() is None
 
 
 @pytest.mark.asyncio
-async def test_slide_route_closes_forwarded_stream_on_disconnect(monkeypatch):
+@pytest.mark.parametrize("mode", ["send_error", "disconnect", "cancel"])
+async def test_slide_route_closes_forwarded_stream_on_disconnect(monkeypatch, mode):
     """The slide SSE route must close the service stream it forwards."""
     import landppt.web.route_modules.slide_routes as routes
 
@@ -149,9 +192,10 @@ async def test_slide_route_closes_forwarded_stream_on_disconnect(monkeypatch):
     async def slides_stream(_project_id):
         recorder.events.append(("slides:start", get_current_ai_conversation_id()))
         try:
-            async with aclosing(recorder.provider("slides")) as provider:
-                async for _payload in provider:
-                    yield 'data: {"type": "progress", "current": 1, "total": 2}\n\n'
+            with ai_conversation_context("slides-session"):
+                async with aclosing(recorder.provider("slides")) as provider:
+                    async for _payload in provider:
+                        yield 'data: {"type": "progress", "current": 1, "total": 2}\n\n'
         finally:
             recorder.events.append(("slides:closed", get_current_ai_conversation_id()))
 
@@ -168,9 +212,7 @@ async def test_slide_route_closes_forwarded_stream_on_disconnect(monkeypatch):
 
     response = await routes.stream_slides_generation("project-1", SimpleNamespace(id=1))
 
-    async with aclosing(response.body_iterator) as stream:
-        async for _chunk in stream:
-            break
+    await _disconnect_response(response, mode)
 
     assert recorder.closed("slides:closed"), recorder.names()
     assert recorder.closed("slides:provider:closed"), recorder.names()
